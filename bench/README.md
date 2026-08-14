@@ -19,6 +19,33 @@ the illusion that it was automated.
 - **Valorant running and in the Range.** The Range is repeatable in a way live
   matches are not, which is the whole reason §29 specifies it.
 - `cargo build --release` in `../recorder-proto` for the `ours` condition.
+- **Nothing else recording.** Preflight refuses to start if another process holds
+  the GPU video-encode engine, because that process is both a second recorder in
+  your "baseline" and a competitor for the encode silicon. Discord's clip capture
+  is the one that caught us: a steady 9.4% through three baseline runs.
+
+## Focus is the whole ballgame
+
+**Valorant caps itself to ~30 fps when it is not the foreground window.** Every
+backgrounded frame lands at ~33 ms, which is precisely where the 1% and 0.1% lows
+live — so a run that loses focus is not a slightly noisy run, it is a measurement
+of alt-tab.
+
+The harness therefore blocks until Valorant genuinely holds the foreground, settles
+two seconds, and only then starts PresentMon. It will print:
+
+```
+>>> Click into Valorant now. Measurement starts once it has focus.
+```
+
+Click into the game and the run begins. Focus is then polled at 10 Hz for the whole
+run; any loss is reported in red and stored as `focusLostPct` in the run's
+`meta.json`. `Measure-Frames.ps1` independently recomputes the throttled-frame share
+from the frame data, so a contaminated run cannot slip into a table even if it is
+analysed later from the CSV alone.
+
+Do not alt-tab mid-run. If you do, redo that run — it is one minute, and the
+alternative is a published number that is wrong.
 
 ## Running the matrix
 
