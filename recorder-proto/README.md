@@ -64,6 +64,36 @@ should agree — the muxer writes real timestamps, so a file that claims the
 *configured* fps rather than the achieved one would mean the VFR path has
 regressed (ADR §7).
 
+### `replay` — the last N seconds, on demand
+
+```bash
+cargo run --release -- replay 30 60 clip.mp4
+```
+
+`replay [window] [fps] [output]`. Encodes continuously into a memory ring of
+*compressed* samples and, at the end of the run, muxes the last `window` seconds
+into a file. The run lasts `window + 15` seconds on purpose, so the ring wraps and
+eviction is actually exercised.
+
+Compressed, not raw, because the arithmetic is not close: ten seconds of 1080p60
+BGRA is ~5 GB of VRAM on a 6 GB card that is also running the game; the same ten
+seconds encoded is ~15 MB of RAM. Evicted frames donate their buffers to a pool,
+so after the ring first fills, steady state allocates nothing — the printed
+`allocated` counter must stop growing after warmup, and the output shows it.
+
+The save is container work only — the frames are already encoded. Measured on the
+2060 rig: **~50 ms** for an 11-second clip. That number is the product promise:
+the moment a replay protects has already happened, so saving must feel instant.
+
+A clip must start on a keyframe. The ring retains two GOPs beyond the window and
+the save picks the latest keyframe at or before the window start, so a saved clip
+is slightly *longer* than requested, never truncated or broken at the front.
+
+If the output ever reports `non-monotonic timestamps`, the encoder emitted
+B-frames (reordered timestamps) and the clip's timing is suspect. NVENC's MFT
+defaults to none; the explicit B=0 request via ICodecAPI is rejected on this
+driver, so the counter is the check that the default holds.
+
 ### `--foreground` — target any window instead of the game
 
 ```bash

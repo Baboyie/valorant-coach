@@ -6,7 +6,12 @@ description = "Headless capture/encode prototype for the Valorant recorder. Prov
 publish = false
 
 [dependencies]
-windows = { version = "0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_UI_WindowsAndMessaging", "Win32_System_WinRT_Graphics_Capture", "Win32_System_WinRT_Direct3D11", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_System_Threading"] }
+# Variant + Ole are for the replay buffer: ICodecAPI (B-frame count,
+# low-latency mode) speaks VARIANT, and the VARIANT struct itself is gated on
+# both Com and Ole. windows-core is a direct dependency because the
+# #[implement] macro (grabber sink callback) generates code that names it.
+windows = { version = "0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_UI_WindowsAndMessaging", "Win32_System_WinRT_Graphics_Capture", "Win32_System_WinRT_Direct3D11", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_System_Threading"] }
+windows-core = "0.62.2"
 
 [profile.release]
 # The prototype is measured, so the release profile is part of the experiment.

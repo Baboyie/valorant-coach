@@ -7,11 +7,14 @@
 //!   recorder-proto probe                     what can this machine encode with
 //!   recorder-proto capture [secs] [fps]      capture only, no encoding
 //!   recorder-proto record  [secs] [fps] [out.mp4]   capture + hardware encode
+//!   recorder-proto replay  [window] [fps] [out.mp4] encode into a memory ring,
+//!                                            then save the last [window] secs
 
 mod capture;
 mod d3d;
 mod encoder;
 mod encoders;
+mod replay;
 
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -34,8 +37,11 @@ fn main() -> Result<()> {
         "probe" => cmd_probe(),
         "capture" => cmd_capture(),
         "record" => cmd_record(),
+        "replay" => cmd_replay(),
         other => {
-            eprintln!("unknown command: {other}\n\nusage: recorder-proto [probe|capture|record]");
+            eprintln!(
+                "unknown command: {other}\n\nusage: recorder-proto [probe|capture|record|replay]"
+            );
             Ok(())
         }
     };
@@ -245,7 +251,7 @@ fn cmd_record() -> Result<()> {
     println!("format : {w}x{h} @ {fps} fps, {:.1} Mbps H.264\n", bitrate as f64 / 1e6);
 
     let cfg = encoder::EncoderConfig { width: w, height: h, fps, bitrate };
-    let mut enc = encoder::Encoder::new(&dev, &out, &cfg)?;
+    let mut enc = encoder::Encoder::to_file(&dev, &out, &cfg)?;
 
     // Only now: the encoder exists, so the first captured frame has somewhere to
     // go. Starting capture any earlier spends the ring on sink-writer init.
@@ -300,6 +306,104 @@ fn cmd_record() -> Result<()> {
         Ok(m) => println!("\nwrote {out} — {:.1} MB", m.len() as f64 / 1e6),
         Err(e) => println!("\ncould not stat {out}: {e}"),
     }
+    print_provenance(&dev);
+    Ok(())
+}
+
+/* ------------------------------------------------------------------ replay */
+
+/// Replay buffer: encode continuously into a memory ring, then save the last
+/// `window` seconds — the ShadowPlay-style "that just happened, keep it" path,
+/// which is the reason this product records at all.
+///
+/// The run deliberately lasts longer than the window so the ring wraps: a test
+/// where eviction never fired would prove nothing about the part of this that
+/// is actually new.
+fn cmd_replay() -> Result<()> {
+    let window: u64 = arg(2).and_then(|s| s.parse().ok()).unwrap_or(15);
+    let fps: u32 = arg(3).and_then(|s| s.parse().ok()).unwrap_or(60);
+    let out = arg(4).unwrap_or_else(|| "replay.mp4".into());
+    let run_secs = window + 15;
+
+    let Some(t) = pick_target() else {
+        eprintln!("no window to capture");
+        return Ok(());
+    };
+
+    let dev = d3d::Device::new()?;
+    let (cap, frames) = capture::Capture::for_window(&dev, t.hwnd, fps, 6)?;
+
+    let w = cap.size.Width as u32;
+    let h = cap.size.Height as u32;
+    if w % 2 == 1 || h % 2 == 1 {
+        eprintln!("warning: {w}x{h} has an odd dimension; H.264 wants even sizes and \
+                   the encoder may reject it.");
+    }
+    let bitrate = ((w as u64 * h as u64 * fps as u64) / 10).min(80_000_000) as u32;
+
+    println!("target : {}", t.what);
+    println!("window : last {window}s kept, running {run_secs}s so the ring wraps");
+    println!("format : {w}x{h} @ {fps} fps, {:.1} Mbps H.264\n", bitrate as f64 / 1e6);
+
+    // 256 MB hard cap: the window bounds memory in time, this bounds it in
+    // bytes if the bitrate estimate is ever badly wrong (ADR §6's RAM budget).
+    let ring = std::sync::Arc::new(replay::ReplayRing::new(window, 2, 256 * 1024 * 1024));
+    let cfg = encoder::EncoderConfig { width: w, height: h, fps, bitrate };
+    let mut enc = encoder::Encoder::to_replay(&dev, &cfg, std::sync::Arc::clone(&ring))?;
+
+    cap.start()?;
+
+    let deadline = Instant::now() + Duration::from_secs(run_secs);
+    while Instant::now() < deadline {
+        if let Ok(true) = cap.poll_resize() {
+            println!("  (capture target resized; frame pool rebuilt, recording continues)");
+        }
+        match frames.full_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok((slot, ts)) => {
+                let r = enc.write_frame(&frames.ring.textures[slot], ts);
+                let _ = frames.free_tx.send(slot);
+                r?;
+            }
+            Err(_) => {}
+        }
+    }
+
+    cap.stop()?;
+    while let Ok((slot, ts)) = frames.full_rx.try_recv() {
+        let _ = enc.write_frame(&frames.ring.textures[slot], ts);
+        let _ = frames.free_tx.send(slot);
+    }
+    enc.finish()?;
+
+    print_capture_stats(&cap.stats, run_secs);
+
+    let r = ring.report();
+    println!();
+    println!("replay ring : {} frames ({} keyframes), {:.1} MB, spanning {:.1}s",
+             r.frames, r.keyframes, r.bytes as f64 / 1e6, r.span_secs);
+    println!("              evicted {} frames; buffers: {} allocated, {} reused",
+             r.evicted, r.allocs, r.reuses);
+    println!("              keyframe interval {:.2}s (configured: 2s)",
+             r.mean_kf_interval_secs);
+    if r.non_monotonic > 0 {
+        // B-frames got through despite configure_codec — the muxed clip's
+        // timestamps are suspect and this needs investigating, loudly.
+        println!("              WARNING: {} non-monotonic timestamps — B-frames?",
+                 r.non_monotonic);
+    }
+
+    match ring.save_mp4(&out, &cfg) {
+        Ok(s) => {
+            println!();
+            println!("saved  : last {:.1}s ({} frames, {:.1} MB) -> {out}",
+                     s.span_secs, s.frames, s.bytes as f64 / 1e6);
+            // The number that matters for the product: a save must feel
+            // instant, because the moment it protects has already happened.
+            println!("save cost : {:.0} ms (mux only — no encoder work)", s.elapsed_ms);
+        }
+        Err(e) => println!("\nsave failed: {e}"),
+    }
+
     print_provenance(&dev);
     Ok(())
 }

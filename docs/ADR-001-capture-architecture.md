@@ -381,6 +381,54 @@ Still true for the benchmark, since dropped frames are still lost frames: **star
 the recorder only when Valorant is on screen at its final resolution.**
 `bench/Invoke-Benchmark.ps1` refuses to start a run against a minimised game.
 
+## 8a. Replay buffer (built 2026-08-15)
+
+The last §3 pipeline stage. Design: the ring holds **encoded** H.264 samples in
+system RAM, never raw frames — ten seconds of 1080p60 BGRA is ~5 GB against a 6 GB
+card running the game, while the same ten seconds encoded is ~15 MB (§6's budget
+question, answered by arithmetic). The encoder runs continuously; a save is
+container work only.
+
+Implementation: the same sink writer and hardware-encoder path as `record`, with
+the MP4 sink swapped for a **sample grabber sink** whose callback hands each
+compressed sample to the ring. Encoding and muxing are thereby decoupled. On save,
+a second sink writer muxes the buffered samples in passthrough (H.264 in, H.264
+out, no transform); SPS/PPS are lifted from the first IDR's in-band parameter sets
+and attached as `MF_MT_MPEG_SEQUENCE_HEADER` rather than hoping the sink finds
+them. The passthrough type must be *minimal* — encoder instructions (GOP, profile)
+on a mux type make Media Foundation reject it as inconsistent (`0xC00D36B4`,
+observed).
+
+Decisions that follow §19/§10 directly:
+
+- **Evicted frames donate their buffers to a pool**, so once the ring has filled,
+  steady state allocates nothing. Verified: 633 allocations while filling, then
+  471 consecutive reuses and zero further allocations.
+- **The ring retains two GOPs beyond the window** so a keyframe always exists at
+  or before the window start; a clip must begin on an IDR or its first GOP is
+  garbage. GOP is pinned to 2 s via `MF_MT_MAX_KEYFRAME_SPACING` (observed
+  interval on NVENC: 1.34 s — a maximum, not a cadence).
+- **Saving snapshots under the lock and muxes outside it.** A grabber thread
+  blocked for the mux's tens of milliseconds would back up the sink writer and
+  eventually the capture ring — §10's drop-never-stall, kept true here too.
+- **B-frames are the failure mode to watch**: they arrive in decode order with
+  reordered timestamps, which the ring would store faithfully and the muxer would
+  garble. The explicit B=0 request via `ICodecAPI` is *rejected* by this NVIDIA
+  driver (`E_INVALIDARG`), so the ring counts non-monotonic timestamps as a
+  canary. Measured: zero across every run — NVENC's MFT emits no B-frames by
+  default. The canary stays, because a driver update could change the default
+  silently.
+
+Measured on the rig (960×640 animated test window, 10 s window, 25 s run): 1104
+frames captured with zero drops, ring steady at 14.0 s spanned (window + margin,
+exactly as specified), and **save cost 50 ms** for an 11.3 s / 504-frame clip.
+That save cost is the product promise: the moment a replay protects has already
+happened, so the save must feel instant.
+
+Prototype simplifications, recorded so they are not mistaken for the design: the
+ring is `Mutex`-guarded (uncontended at 60 locks/s; the shipping §3 pipeline
+specifies lock-free), and the save is synchronous on the caller's thread.
+
 ## 9. §29 benchmark — first results (provisional)
 
 Measured 2026-08-15 on the benchmark rig, 1080p, Valorant in the Range, Intel
@@ -457,7 +505,9 @@ good.
   re-run, per §9. Until then no FPS claim ships, per §1.
 - ShadowPlay and OBS columns of the §5 matrix are not installed on this rig, so the
   current table is baseline × ours only.
-- Replay buffer is unbuilt. Capture-item size changes are now handled (§8).
+- ~~Replay buffer is unbuilt.~~ **Built and measured** — see §8a. Size changes are
+  handled (§8). The §3 pipeline now exists end to end; what remains prototype-grade
+  is the ring's mutex (spec says lock-free) and the synchronous save.
 
 ### Note on the toolchain install
 
