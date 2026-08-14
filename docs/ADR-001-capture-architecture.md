@@ -490,8 +490,52 @@ is currently swamping everything, and it converts a fuzzy question ("how much
 headroom does recording consume?") into the one that actually matters
 competitively: **does recording ever push the player below their refresh rate?**
 
-Per §1, none of this is described as "0% FPS loss" — including the parts that look
-good.
+### Capped re-run (same day): the FPS question, resolved
+
+Ran with Valorant capped to 240 fps, runs alternating baseline/ours. The cap did
+exactly what it was chosen to do: the two pristine baselines agree to **0.08%**
+(237.1 vs 237.3 fps average), versus 8.2% disagreement uncapped. There is finally
+a control tight enough to measure against.
+
+Screening earned its keep again — of eight runs, three baselines were excluded:
+two where the operator briefly alt-tabbed (caught by the harness's 10 Hz focus
+poll; the frame-based check alone misses sub-2 s alt-tabs, whose transition
+hitches still poison the 0.1% low — 58.8 vs ~125 fps on otherwise identical runs),
+and two overlapping a foreign encoder, one of which was *our own harness's
+previous recorder still finalising* (the recorder's runtime margin outlived the
+teardown wait; fixed by starting the recorder only after focus is held and
+refusing to proceed while one is alive).
+
+Pristine runs, 60 s each, 1080p @ 240 cap, recorder at 1080p60 / ~12 Mbps NVENC:
+
+| | baseline (n=2) | recording (n=3) | delta |
+|---|---|---|---|
+| Average FPS | 237.2 | 237.1 | −0.04% |
+| 1% low | 152.7 | 152.4 | −0.2% |
+| 0.1% low | 127.8 | 126.4 | −1.1% |
+| Frame-time stddev | 0.796 ms | 0.828 ms | +0.032 ms |
+| Wall time below 120 fps | 0.08% | 0.09% | +0.01 pp |
+| Wall time below 60 fps | 0% | 0% | 0 |
+
+Every delta is inside the baseline's own run-to-run spread. **While capped at
+240 fps on this rig, recording costs nothing measurable**: the game does not get
+pushed below its refresh-rate budget (below-120 time identical, below-60 time
+zero in both conditions), and frame-time consistency moves by 0.03 ms on a 0.8 ms
+baseline — noise. The pacing path was also exercised at real rates for the first
+time: ~240 arrivals/s paced down to 60 kept, drops landing in `dropped by pacing`
+as designed.
+
+Two honest caveats. Baseline n=2 rather than §5's three, because two of three
+were consumed by the harness bug — but two controls agreeing to 0.08% bound the
+answer more tightly than three noisy ones ever did, so this stands. And the
+*uncapped* cost remains what §9's first table says: unresolved between roughly
+0 and 10%, because for uncapped play the route variance is not a measurement
+artifact — it is the signal. A player who caps (the common competitive
+configuration on a 240 Hz panel) gets the recorder for free; an uncapped player's
+cost is real but small enough that this dataset cannot pin it.
+
+Per §1, none of this is described as "0% FPS loss" — including now, when it
+rounds to that.
 
 ## 10. Blockers
 
@@ -500,9 +544,10 @@ good.
   harness are installed.
 - ~~§29 acceptance benchmarking is gated on a play session.~~ **Done** — see §9.
   Capture, encode, RAM and CPU costs are measured and solid.
-- **The FPS cost is still unresolved**, because route variance in the Range (8.2%
-  between two clean baselines) is as large as the effect. Gated on a capped-frame-rate
-  re-run, per §9. Until then no FPS claim ships, per §1.
+- ~~The FPS cost is still unresolved.~~ **Resolved for capped play** by the 240 fps
+  re-run (§9): no measurable cost — every delta inside the control's own spread.
+  The *uncapped* cost remains bounded at 0–10% and would need a repeatable
+  scripted route to pin tighter; not worth gating anything on.
 - ShadowPlay and OBS columns of the §5 matrix are not installed on this rig, so the
   current table is baseline × ours only.
 - ~~Replay buffer is unbuilt.~~ **Built and measured** — see §8a. Size changes are

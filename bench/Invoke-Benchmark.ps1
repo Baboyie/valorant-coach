@@ -185,23 +185,6 @@ $samplerBlock = {
 
 # ------------------------------------------------------------- the recorder ---
 
-$recorder = $null
-if ($Condition -eq 'ours') {
-    # Longer window than the measurement so PresentMon never sees the recorder
-    # starting up or tearing down — those frames would flatter us. The margin is
-    # generous because the recorder starts *before* the focus wait, and the
-    # operator may take a while to click into the game; a recorder that expired
-    # mid-measurement would look like a clean run that quietly stopped recording.
-    $recSecs = $Seconds + 90
-    New-Item -ItemType Directory -Force -Path $VideoDir | Out-Null
-    $recOut = Join-Path $VideoDir "$tag.mp4"
-    Write-Host "starting recorder-proto for $recSecs s -> $recOut" -ForegroundColor Yellow
-    $recorder = Start-Process -FilePath $RecorderExe `
-        -ArgumentList @('record', $recSecs, $Fps, $recOut) `
-        -PassThru -WindowStyle Minimized
-    Start-Sleep -Seconds 3   # let capture reach steady state before measuring
-}
-
 # ------------------------------------------------------------ wait for focus ---
 #
 # Nothing is measured until Valorant is genuinely the foreground window.
@@ -236,6 +219,29 @@ if (-not (Test-GameFocused)) {
 }
 # Let the game settle back to its unthrottled frame rate before measuring.
 Start-Sleep -Seconds 2
+
+# ------------------------------------------------------------- the recorder ---
+#
+# Started only AFTER focus is held, so its runtime needs no allowance for how
+# long the operator takes to click into the game. The margin here used to be
+# 90 s for exactly that reason, and it caused real contamination: teardown only
+# waited 30 s, so each recorder kept encoding ~80 s into the *next* run, and
+# back-to-back baselines showed 11.8% encode-engine activity from our own
+# previous recorder. The fix is ordering, not a bigger wait.
+
+$recorder = $null
+if ($Condition -eq 'ours') {
+    # 3 s of pre-roll to reach steady state, the measured window, and a small
+    # tail so PresentMon never sees the recorder tearing down.
+    $recSecs = $Seconds + 9
+    New-Item -ItemType Directory -Force -Path $VideoDir | Out-Null
+    $recOut = Join-Path $VideoDir "$tag.mp4"
+    Write-Host "starting recorder-proto for $recSecs s -> $recOut" -ForegroundColor Yellow
+    $recorder = Start-Process -FilePath $RecorderExe `
+        -ArgumentList @('record', $recSecs, $Fps, $recOut) `
+        -PassThru -WindowStyle Minimized
+    Start-Sleep -Seconds 3   # let capture reach steady state before measuring
+}
 
 # ---------------------------------------------------------------- PresentMon ---
 
@@ -288,10 +294,13 @@ if ($focusLost -gt 0) {
 if ($recorder -and -not $recorder.HasExited) {
     Write-Host "waiting for recorder to finalise the mp4..." -ForegroundColor Yellow
     # Do not kill it: finish() writes the moov atom, and a killed recorder
-    # leaves an unplayable file that looks like an encoder bug.
-    $null = $recorder.WaitForExit(30000)
+    # leaves an unplayable file that looks like an encoder bug. And do not
+    # "leave it alone" on timeout either — a recorder that outlives this script
+    # is a foreign encoder inside whoever measures next. It has ~9 s of tail;
+    # a minute of patience is cheaper than a poisoned control.
+    $null = $recorder.WaitForExit(60000)
     if (-not $recorder.HasExited) {
-        Write-Host "recorder still running after 30 s; leaving it alone." -ForegroundColor Yellow
+        Fail "recorder still running 60 s after measurement ended — investigate before running anything else; it will contaminate the next run's encode counters."
     }
 }
 

@@ -150,6 +150,20 @@ function Measure-Run {
         if ($vv.Count) { $stat['VideoBusyMs'] = [math]::Round(($vv | Measure-Object -Average).Average, 3) }
     }
 
+    # Focus metadata, if the run produced it. This exists because the
+    # frame-based throttle check has a blind spot: an alt-tab under ~2 s barely
+    # engages the background frame cap, so ThrottlePct stays near zero while
+    # the transition hitches still poison the 0.1% low (measured: 58.8 vs ~125
+    # on otherwise identical runs). The harness's 10 Hz focus poll sees what
+    # the frame times hide.
+    $metaJson = $FrameCsv -replace '\.frames\.csv$', '.meta.json'
+    if (Test-Path $metaJson) {
+        $meta = Get-Content $metaJson -Raw | ConvertFrom-Json
+        if ($null -ne $meta.focusLostPct) {
+            $stat['FocusLostPct'] = [double]$meta.focusLostPct
+        }
+    }
+
     # Counter sidecar, if the run produced one.
     $counterCsv = $FrameCsv -replace '\.frames\.csv$', '.counters.csv'
     if (Test-Path $counterCsv) {
@@ -215,6 +229,25 @@ $runs | Format-Table Condition, Frames, AvgFps, Low1Fps, Low01Fps, FtStdDevMs, F
 # Refuse to let a contaminated run pass quietly into a summary. 1% is a generous
 # threshold: a clean run on a focused game should be 0.00.
 $dirty = @($runs | Where-Object { $_.ThrottlePct -gt 1.0 })
+
+# Any recorded focus loss disqualifies independently of frame times — see the
+# note where FocusLostPct is read.
+$focusDirty = @($runs | Where-Object {
+    $_.PSObject.Properties.Name -contains 'FocusLostPct' -and $_.FocusLostPct -gt 0.5
+})
+if ($focusDirty.Count -gt 0) {
+    Write-Host "WARNING: $($focusDirty.Count) run(s) lost window focus during measurement:" -ForegroundColor Red
+    foreach ($d in $focusDirty) {
+        Write-Host ("  {0,-10} focus lost {1,5:F2}% of the run  <- percentile lows are poisoned" -f $d.Condition, $d.FocusLostPct) -ForegroundColor Red
+    }
+    Write-Host "  Excluded from the summary. Re-run them." -ForegroundColor Red
+    Write-Host ""
+    if (-not $IncludeContaminated) {
+        $runs = @($runs | Where-Object {
+            -not ($_.PSObject.Properties.Name -contains 'FocusLostPct' -and $_.FocusLostPct -gt 0.5)
+        })
+    }
+}
 if ($dirty.Count -gt 0) {
     Write-Host "WARNING: $($dirty.Count) run(s) spent >1% of wall time below 40 fps." -ForegroundColor Red
     foreach ($d in $dirty) {

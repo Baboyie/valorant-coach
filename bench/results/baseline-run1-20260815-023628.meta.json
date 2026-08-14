@@ -1,0 +1,17 @@
+﻿{
+    "condition":  "baseline",
+    "run":  1,
+    "seconds":  60,
+    "targetFps":  60,
+    "timestamp":  "20260815-023628",
+    "cpu":  "12th Gen Intel(R) Core(TM) i5-12400F",
+    "gpu":  "NVIDIA GeForce RTX 2060",
+    "ramGB":  16,
+    "presentMon":  "2.5.1 (console)",
+    "frameCsv":  "baseline-run1-20260815-023628.frames.csv",
+    "counterCsv":  "baseline-run1-20260815-023628.counters.csv",
+    "focusLostPct":  0,
+    "encoderContention":  [
+
+                          ]
+}
