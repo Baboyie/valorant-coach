@@ -25,7 +25,10 @@
 [CmdletBinding()]
 param(
     [string]$ResultsDir = (Join-Path $PSScriptRoot 'results'),
-    [switch]$Markdown
+    [switch]$Markdown,
+    # Average contaminated runs into the summary anyway. For inspecting damage,
+    # never for reporting.
+    [switch]$IncludeContaminated
 )
 
 $ErrorActionPreference = 'Stop'
@@ -219,7 +222,24 @@ if ($dirty.Count -gt 0) {
     }
     Write-Host "  Valorant throttles to 30 fps unfocused. These runs measure alt-tab," -ForegroundColor Red
     Write-Host "  not recorder overhead, and their 1%/0.1% lows should not be reported." -ForegroundColor Red
+    if ($IncludeContaminated) {
+        Write-Host "  INCLUDING them anyway (-IncludeContaminated). The summary below is not reportable." -ForegroundColor Red
+    } else {
+        Write-Host "  Excluded from the summary below. Re-run them." -ForegroundColor Red
+    }
     Write-Host ""
+}
+
+# Warning and then averaging them in anyway is the worst of both worlds: it puts a
+# number on screen that looks like a result. A contaminated run is not a noisy
+# sample of the right thing, it is a clean sample of the wrong thing, so the
+# default is to drop it.
+if (-not $IncludeContaminated) {
+    $runs = @($runs | Where-Object { $_.ThrottlePct -le 1.0 })
+    if ($runs.Count -eq 0) {
+        Write-Host "No clean runs left to summarise." -ForegroundColor Red
+        exit 1
+    }
 }
 
 Write-Host "=== by condition (mean of runs) ===" -ForegroundColor Cyan

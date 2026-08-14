@@ -265,6 +265,11 @@ while (-not $pm.HasExited) {
     if (-not (Test-GameFocused)) { $focusLost++ }
     Start-Sleep -Milliseconds 100
 }
+# WaitForExit() before reading ExitCode, even though HasExited is already true:
+# a Process from Start-Process -PassThru that was only ever polled can hand back
+# a null ExitCode, and `$null -ne 0` is true, so the naive check failed every
+# run including the successful ones. Returns immediately here.
+$pm.WaitForExit()
 $pmExit = $pm.ExitCode
 
 $focusLostPct = 0.0
@@ -294,8 +299,13 @@ Wait-Job $sampler -Timeout 30 | Out-Null
 Receive-Job $sampler -ErrorAction SilentlyContinue | Out-Null
 Remove-Job $sampler -Force -ErrorAction SilentlyContinue
 
-if ($pmExit -ne 0) { Fail "PresentMon exited $pmExit" }
+# Judge the run on its artefact, not only on an exit code that may be unreadable.
+if ($null -ne $pmExit -and $pmExit -ne 0) { Fail "PresentMon exited $pmExit" }
 if (-not (Test-Path $frameCsv)) { Fail "PresentMon produced no CSV" }
+$frameRows = @(Import-Csv $frameCsv)
+if ($frameRows.Count -lt 100) {
+    Fail "PresentMon wrote only $($frameRows.Count) frames — the capture did not run properly."
+}
 
 # Record the machine with the numbers. A benchmark figure without the rig it came
 # from is exactly the kind of claim ADR §6 says invalidates a report.
