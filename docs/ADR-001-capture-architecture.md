@@ -350,18 +350,84 @@ enough to know the rule: **start the recorder only when Valorant is on screen at
 its final resolution.** `bench/Invoke-Benchmark.ps1` now refuses to start a run
 against a minimised game for exactly this reason.
 
-## 9. Blockers
+## 9. §29 benchmark — first results (provisional)
+
+Measured 2026-08-15 on the benchmark rig, 1080p, Valorant in the Range, Intel
+PresentMon 2.5.1 console build. **Baseline × ours only** — ShadowPlay and OBS are
+not installed on this rig, so two of §5's four columns are absent.
+
+Runs are screened before they count. A run is discarded if it spent >1% of wall
+time below 40 fps (Valorant throttles to ~30 fps unfocused), or — for a baseline —
+if another process was on the GPU encode engine, since a contended control is
+slower than a true one and would flatter us. Of nine runs, **two baselines and four
+recording runs survived**; one baseline lost focus and two more had a foreign
+encoder appear mid-run.
+
+| | baseline (n=2) | recording (n=4) | delta |
+|---|---|---|---|
+| Average FPS | 291.1 | 266.7 | **−8.4%** |
+| 1% low | 187.7 | 169.5 | −9.7% |
+| 0.1% low | 147.2 | 132.9 | −9.7% |
+| **Frame-time stddev** | **0.588 ms** | **0.670 ms** | **+0.082 ms** |
+| GPU 3D | 18.2% | 20.8% | +2.6 pp |
+| GPU encode (NVENC) | 0% | 15.3% | +15.3 pp |
+| Recorder RAM | — | 86–87 MB | |
+| Recorder CPU | — | 0.45–0.54% of 12 threads | |
+
+### What this establishes, and what it does not
+
+**Do not quote the FPS figures.** The two clean baselines were 302.6 and 279.6 fps
+— **8.2% apart from each other, with no recorder running in either.** The measured
+recorder cost is 8.4%. When the spread between two controls equals the effect,
+the effect is not resolved. A Welch test over the clean runs gives |t| ≈ 1 against
+a threshold near 2.4, and the 95% interval on the difference comfortably spans
+zero. The honest statement is that the recorder's FPS cost is **somewhere between
+nothing and roughly 10%, and this dataset cannot narrow it further.**
+
+The variance is route variance, not measurement noise. At 260–380 fps uncapped in
+the Range, where the camera points dominates frame rate.
+
+**Four results are solid**, because their run-to-run spread is small relative to
+the quantity itself:
+
+1. **Frame-time consistency barely moves: +0.082 ms on a 0.588 ms baseline.** This
+   held at +0.08 to +0.10 ms across every way of filtering the runs, including
+   filterings that flipped the FPS numbers around. §20 makes this the headline
+   figure over average FPS, and on this evidence recording does not make frame
+   delivery meaningfully less consistent.
+2. **NVENC costs 15.3% of the encode engine** at 1080p60. Measured directly, and it
+   is a dedicated block — it is not competing with the shaders for the 3D queue.
+3. **The recorder costs 86–87 MB of RAM and about half a percent of twelve
+   threads** (~6% of one core). Both were stable to within a few percent across
+   four runs. §2's requirement that recording must not compete with the game for
+   CPU is met with room to spare.
+4. **Zero frames were dropped** in any recording run.
+
+### The experiment that would settle the FPS question
+
+Cap Valorant's frame rate at the panel's 240 Hz and re-run. Both conditions then
+pin at the cap wherever there is headroom, which collapses the route variance that
+is currently swamping everything, and it converts a fuzzy question ("how much
+headroom does recording consume?") into the one that actually matters
+competitively: **does recording ever push the player below their refresh rate?**
+
+Per §1, none of this is described as "0% FPS loss" — including the parts that look
+good.
+
+## 10. Blockers
 
 - ~~§29 acceptance benchmarking is gated on physical access to the home rig.~~
   **Resolved** — the prototype now builds and runs there; toolchain, PresentMon and
   harness are installed.
-- §29 acceptance benchmarking is now gated on a **play session**. The harness in
-  `bench/` needs a human flying an identical Range route six times (three baseline,
-  three recording) with Valorant on screen. Nothing about that is automatable, and
-  faking it with a static screen would measure the wrong thing entirely — WGC is
-  change-driven, so an idle scene understates both capture and encode load.
+- ~~§29 acceptance benchmarking is gated on a play session.~~ **Done** — see §9.
+  Capture, encode, RAM and CPU costs are measured and solid.
+- **The FPS cost is still unresolved**, because route variance in the Range (8.2%
+  between two clean baselines) is as large as the effect. Gated on a capped-frame-rate
+  re-run, per §9. Until then no FPS claim ships, per §1.
 - ShadowPlay and OBS columns of the §5 matrix are not installed on this rig, so the
-  first table will be baseline × ours only.
+  current table is baseline × ours only.
+- Replay buffer is unbuilt, and `Direct3D11CaptureFramePool.Recreate` for
+  size changes is unimplemented (§8, "Known gap").
 
 ### Note on the toolchain install
 

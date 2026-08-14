@@ -230,12 +230,37 @@ if ($dirty.Count -gt 0) {
     Write-Host ""
 }
 
+# In a baseline run nothing of ours is encoding, so *any* sustained encode-engine
+# activity is another application recording over the top of the control. Preflight
+# refuses to start when that is already true, but it cannot catch something that
+# begins mid-run — which happened twice here, at 4.0% and 10.4%. A depressed
+# baseline understates the recorder's cost, so this flatters us if left in.
+$foreignEncode = @($runs | Where-Object {
+    $_.Condition -eq 'baseline' -and
+    $_.PSObject.Properties.Name -contains 'GPU.VideoEncode.Pct' -and
+    [double]$_.'GPU.VideoEncode.Pct' -gt 1.0
+})
+if ($foreignEncode.Count -gt 0) {
+    Write-Host "WARNING: $($foreignEncode.Count) baseline run(s) had another process on the encode engine:" -ForegroundColor Red
+    foreach ($fe in $foreignEncode) {
+        Write-Host ("  baseline  encode={0,5:F1}%  <- not a recorder-free control" -f $fe.'GPU.VideoEncode.Pct') -ForegroundColor Red
+    }
+    Write-Host "  A contended baseline is slower than a true baseline, which makes the" -ForegroundColor Red
+    Write-Host "  recorder look cheaper than it is. Excluded from the summary." -ForegroundColor Red
+    Write-Host ""
+}
+
 # Warning and then averaging them in anyway is the worst of both worlds: it puts a
 # number on screen that looks like a result. A contaminated run is not a noisy
 # sample of the right thing, it is a clean sample of the wrong thing, so the
 # default is to drop it.
 if (-not $IncludeContaminated) {
     $runs = @($runs | Where-Object { $_.ThrottlePct -le 1.0 })
+    $runs = @($runs | Where-Object {
+        -not ($_.Condition -eq 'baseline' -and
+              $_.PSObject.Properties.Name -contains 'GPU.VideoEncode.Pct' -and
+              [double]$_.'GPU.VideoEncode.Pct' -gt 1.0)
+    })
     if ($runs.Count -eq 0) {
         Write-Host "No clean runs left to summarise." -ForegroundColor Red
         exit 1
