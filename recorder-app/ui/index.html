@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>DEBRIEF</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span id="dot" class="dot idle"></span>
+      <h1>DEBRIEF</h1>
+    </div>
+    <span id="state" class="state">starting…</span>
+  </header>
+
+  <section class="panel">
+    <div class="buffer">
+      <div class="buffer-head">
+        <span id="buffered">0.0s</span>
+        <span id="ringsize" class="muted">buffered</span>
+      </div>
+      <div class="bar"><div id="fill" class="fill"></div></div>
+    </div>
+
+    <div class="actions">
+      <button id="clip" class="primary" disabled>Save clip</button>
+      <button id="record" disabled>Start recording</button>
+    </div>
+    <p id="hotkeyhint" class="muted small"></p>
+  </section>
+
+  <section class="panel">
+    <h2>Live</h2>
+    <dl class="stats">
+      <dt>Frames kept</dt><dd id="kept">—</dd>
+      <dt>Capture callback p99</dt><dd id="p99">—</dd>
+      <dt>Dropped (ring full)</dt><dd id="dropfull">—</dd>
+      <dt>Dropped (target resized)</dt><dd id="dropresize">—</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>Settings</h2>
+    <div class="field">
+      <label for="window">Replay window</label>
+      <div class="row"><input id="window" type="number" min="5" max="300" step="5" /><span class="muted">seconds</span></div>
+    </div>
+    <div class="field">
+      <label for="fps">Recording frame rate</label>
+      <div class="row"><input id="fps" type="number" min="30" max="240" step="10" /><span class="muted">fps</span></div>
+    </div>
+    <div class="field">
+      <label for="bitrate">Bitrate</label>
+      <div class="row"><input id="bitrate" type="number" min="0" max="80" step="1" /><span class="muted">Mbps — 0 = auto</span></div>
+    </div>
+    <div class="field">
+      <label for="hotkey">Save-clip hotkey</label>
+      <div class="row"><input id="hotkey" type="text" /><span class="muted">restart to apply</span></div>
+    </div>
+    <div class="field">
+      <label for="outdir">Output folder</label>
+      <div class="row"><input id="outdir" type="text" /></div>
+    </div>
+    <button id="save">Save settings</button>
+    <span id="saved" class="muted small"></span>
+  </section>
+
+  <section id="lastwrap" class="panel hidden">
+    <h2>Last saved</h2>
+    <p id="lastclip" class="path"></p>
+    <button id="reveal">Show in Explorer</button>
+  </section>
+
+  <p id="error" class="error hidden"></p>
+
+  <footer class="muted small">
+    Closing this window keeps DEBRIEF buffering in the tray.
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

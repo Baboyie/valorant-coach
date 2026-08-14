@@ -537,6 +537,61 @@ cost is real but small enough that this dataset cannot pin it.
 Per §1, none of this is described as "0% FPS loss" — including now, when it
 rounds to that.
 
+## 9a. The app (built 2026-08-15)
+
+`recorder-app` — Tauri v2 shell over `recorder-core`, which was extracted from
+the prototype into a library so the app and the benchmark CLI share one measured
+pipeline rather than two drifting copies. `recorder-proto` remains the
+instrument §5 references.
+
+Structure, and why: **one engine thread owns every Media Foundation and Direct3D
+object**, with the UI sending commands down a channel and reading a status
+snapshot. §6's requirement that the capture path never depend on the UI layer
+becomes structural — no webview behaviour can stall capture, because the webview
+holds nothing capture needs.
+
+**Buffering and manual recording are mutually exclusive in v1.** Both at once
+means two encoders fed the same textures, doubling encode-engine load and
+invalidating the 15.3% figure §9 measured. A recording already contains what a
+clip would have.
+
+Verified on the rig against live Valorant: buffering held at exactly
+window + margin (34.0 s for a 30 s window), 2,918 frames kept, capture callback
+p99 **52 µs**, zero resize drops, and clips saved by global hotkey **in
+141 ms** — 30.0 s at 57.7 fps, the configured window exactly.
+
+### A muxing bug the app exposed that the prototype could not
+
+The first app clip contained 13.8 s of footage and claimed to be **2 seconds
+long**. The file held every frame — it was larger than the ring it came from —
+but the container's timeline was wrong.
+
+Cause: the muxer used the encoder's *nominal* per-sample duration (1/fps)
+instead of the real gap between samples. 143 frames ÷ 60 fps = 2.4 s, which is
+what the MP4 sink wrote. This is precisely what §7 warned about — "the muxer
+must write variable frame rate with real timestamps, not assume a constant
+cadence" — and it stayed invisible through every prototype test because dense
+footage makes nominal and real spacing agree. It took a **static scene**, where
+WGC's change-driven delivery spreads few frames over many seconds, to separate
+them. Fixed by deriving each sample's duration from the next sample's timestamp.
+
+Worth recording as a testing lesson: the prototype exercised this path
+repeatedly against an animated window and never saw it. The bug needed the
+*absence* of motion, which is a state a synthetic test naturally avoids.
+
+### Smart App Control: a second, independent reason to ship signed MSIX
+
+Building the app on this rig failed with `os error 4551` — Smart App Control
+(enforcing) refusing to execute a freshly compiled, unsigned build-script binary
+that carried Mark-of-the-Web, which OneDrive applies to everything it syncs.
+Working around it during development is easy (build outside the synced folder).
+
+The shipping implication is not easy: **SAC will block the distributed app for
+the same reason unless it is code-signed.** §1 already concluded this must ship
+as a packaged MSIX to remove the WGC capture border. That conclusion now has a
+second justification that is entirely independent of the border, which makes the
+code-signing story a prerequisite rather than a preference.
+
 ## 10. Blockers
 
 - ~~§29 acceptance benchmarking is gated on physical access to the home rig.~~
@@ -553,6 +608,10 @@ rounds to that.
 - ~~Replay buffer is unbuilt.~~ **Built and measured** — see §8a. Size changes are
   handled (§8). The §3 pipeline now exists end to end; what remains prototype-grade
   is the ring's mutex (spec says lock-free) and the synchronous save.
+- **Code signing is now a hard prerequisite**, not a packaging preference: Smart
+  App Control blocks unsigned binaries outright (§9a), independently of §1's
+  capture-border reason for MSIX. Nothing ships to another machine until this is
+  settled.
 
 ### Note on the toolchain install
 

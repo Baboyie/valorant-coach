@@ -10,11 +10,7 @@
 //!   recorder-proto replay  [window] [fps] [out.mp4] encode into a memory ring,
 //!                                            then save the last [window] secs
 
-mod capture;
-mod d3d;
-mod encoder;
-mod encoders;
-mod replay;
+use recorder_core::{capture, d3d, encoder, encoders, replay};
 
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -55,7 +51,7 @@ fn main() -> Result<()> {
 
 fn cmd_probe() -> Result<()> {
     println!("=== hardware encoder probe ===\n");
-    let found = crate::encoders::probe()?;
+    let found = encoders::probe()?;
 
     if found.is_empty() {
         // A real, reportable outcome, not an error: this machine would force a
@@ -68,7 +64,7 @@ fn cmd_probe() -> Result<()> {
     for e in &found {
         println!("  {:<6}  {:<20}  {}", e.codec.label(), e.vendor.label(), e.friendly_name);
     }
-    if let Some(best) = crate::encoders::select_best(&found) {
+    if let Some(best) = encoders::select_best(&found) {
         println!("\nselected: {} via {}", best.codec.label(), best.vendor.label());
     }
     Ok(())

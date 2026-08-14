@@ -6,9 +6,15 @@
 node_modules/
 npm-debug.log*
 
-# rust / recorder-proto
+# rust
 target/
 **/target/
+# machine-specific build output location (see recorder-app/README.md —
+# Smart App Control + OneDrive's Mark-of-the-Web block builds inside the sync
+# folder, so the target dir is redirected off it)
+.cargo/config.toml
+# tauri generated
+recorder-app/src-tauri/gen/
 
 # logs and local scratch
 *.log

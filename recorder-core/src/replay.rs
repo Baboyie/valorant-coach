@@ -284,7 +284,23 @@ impl ReplayRing {
 
         let base = snapshot[0].1;
         let mut bytes_written = 0usize;
-        for (data, ts, dur, keyframe) in &snapshot {
+        for (i, (data, ts, dur, keyframe)) in snapshot.iter().enumerate() {
+            // Duration from the gap to the *next* sample, not the encoder's
+            // nominal figure.
+            //
+            // WGC is change-driven, so a static scene genuinely produces frames
+            // far apart while the encoder still reports a nominal 1/fps for
+            // each. Trusting that nominal value makes the MP4 sink lay out the
+            // timeline at a constant cadence, and the clip's duration collapses
+            // to (frames / fps) — measured: 13.8 s of footage muxed as a 2 s
+            // file, containing every frame but claiming a seventh of the time.
+            // ADR §7 is explicit that the muxer must express real timing; dense
+            // footage hides this because nominal and real spacing agree.
+            let real_dur = if i + 1 < snapshot.len() {
+                (snapshot[i + 1].1 - *ts).max(1)
+            } else {
+                *dur
+            };
             let buffer: IMFMediaBuffer = unsafe { MFCreateMemoryBuffer(data.len() as u32)? };
             unsafe {
                 let mut dst: *mut u8 = std::ptr::null_mut();
@@ -297,7 +313,7 @@ impl ReplayRing {
             unsafe {
                 sample.AddBuffer(&buffer)?;
                 sample.SetSampleTime(ts - base)?;
-                sample.SetSampleDuration(*dur)?;
+                sample.SetSampleDuration(real_dur)?;
                 if *keyframe {
                     sample.SetUINT32(&MFSampleExtension_CleanPoint, 1)?;
                 }

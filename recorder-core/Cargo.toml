@@ -1,0 +1,14 @@
+[package]
+name = "recorder-core"
+version = "0.1.0"
+edition = "2021"
+description = "Capture (WGC) -> hardware encode (MF/NVENC) -> file or replay ring. The measured pipeline from ADR-001, as a library."
+publish = false
+
+[dependencies]
+# Variant + Ole are for ICodecAPI (B-frame count, low-latency mode), which
+# speaks VARIANT — and VARIANT itself is gated on both Com and Ole.
+# windows-core is a direct dependency because the #[implement] macro (sample
+# grabber sink callback in the replay path) generates code that names it.
+windows = { version = "0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_UI_WindowsAndMessaging", "Win32_System_WinRT_Graphics_Capture", "Win32_System_WinRT_Direct3D11", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_System_Threading"] }
+windows-core = "0.62.2"

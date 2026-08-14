@@ -1,0 +1,25 @@
+# Workspace for the recorder strand. The web app (DEBRIEF, server.js) lives
+# alongside and is not Cargo's business.
+#
+#   recorder-core   the proven capture -> NVENC -> ring/file pipeline, as a library
+#   recorder-proto  headless CLI over the core: probe/capture/record/replay.
+#                   This stays the benchmark instrument ADR-001 §5 references.
+#   recorder-app    the Tauri desktop app (tray clipper + manual recording)
+[workspace]
+resolver = "2"
+members = [
+    "recorder-core",
+    "recorder-proto",
+    "recorder-app/src-tauri",
+]
+
+# The prototype is measured, so the release profile is part of the experiment
+# (and the app inherits the same treatment). LTO + one codegen unit so we are
+# not benchmarking missed inlining; real panic unwinding kept (abort would
+# change teardown behaviour under test); symbols kept so PresentMon/ETW traces
+# stay readable.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = 1
