@@ -125,6 +125,13 @@ function Measure-Run {
         FtMeanMs    = [math]::Round($meanFt, 3)
         FtStdDevMs  = [math]::Round((Get-StdDev $ft), 3)
         FtMaxMs     = [math]::Round(($ft | Measure-Object -Maximum).Maximum, 2)
+        # Share of wall time spent on frames slower than 25 ms (below 40 fps).
+        # Valorant caps itself to 30 fps when it is not the foreground window, so
+        # a run with a meaningful figure here spent part of its life backgrounded
+        # and its percentile metrics are measuring alt-tab, not the recorder.
+        # Checked from the frame data itself so an old or hand-run CSV cannot
+        # smuggle a contaminated run into a table on the harness's say-so.
+        ThrottlePct = [math]::Round((($ft | Where-Object { $_ -gt 25 } | Measure-Object -Sum).Sum / ($ft | Measure-Object -Sum).Sum) * 100, 2)
     }
 
     # Per-frame GPU and video-encode busy time, averaged. VideoBusy is what
@@ -200,7 +207,20 @@ if ($runs.Count -eq 0) {
 
 Write-Host ""
 Write-Host "=== per-run ===" -ForegroundColor Cyan
-$runs | Format-Table Condition, Frames, AvgFps, Low1Fps, Low01Fps, FtStdDevMs, FtMaxMs -AutoSize
+$runs | Format-Table Condition, Frames, AvgFps, Low1Fps, Low01Fps, FtStdDevMs, FtMaxMs, ThrottlePct -AutoSize
+
+# Refuse to let a contaminated run pass quietly into a summary. 1% is a generous
+# threshold: a clean run on a focused game should be 0.00.
+$dirty = @($runs | Where-Object { $_.ThrottlePct -gt 1.0 })
+if ($dirty.Count -gt 0) {
+    Write-Host "WARNING: $($dirty.Count) run(s) spent >1% of wall time below 40 fps." -ForegroundColor Red
+    foreach ($d in $dirty) {
+        Write-Host ("  {0,-10} {1,5:F2}%  <- backgrounded during the run" -f $d.Condition, $d.ThrottlePct) -ForegroundColor Red
+    }
+    Write-Host "  Valorant throttles to 30 fps unfocused. These runs measure alt-tab," -ForegroundColor Red
+    Write-Host "  not recorder overhead, and their 1%/0.1% lows should not be reported." -ForegroundColor Red
+    Write-Host ""
+}
 
 Write-Host "=== by condition (mean of runs) ===" -ForegroundColor Cyan
 $summary = $runs | Group-Object Condition | ForEach-Object {

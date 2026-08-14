@@ -1,0 +1,13 @@
+﻿{
+    "condition":  "ours",
+    "run":  3,
+    "seconds":  60,
+    "targetFps":  60,
+    "timestamp":  "20260815-010425",
+    "cpu":  "12th Gen Intel(R) Core(TM) i5-12400F",
+    "gpu":  "NVIDIA GeForce RTX 2060",
+    "ramGB":  16,
+    "presentMon":  "2.5.1 (console)",
+    "frameCsv":  "ours-run3-20260815-010425.frames.csv",
+    "counterCsv":  "ours-run3-20260815-010425.counters.csv"
+}
