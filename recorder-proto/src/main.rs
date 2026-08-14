@@ -76,21 +76,51 @@ struct Target {
 }
 
 fn pick_target() -> Option<Target> {
-    match capture::find_valorant() {
-        Some(h) => Some(Target { hwnd: h, what: "VALORANT" }),
-        None => {
-            let h = unsafe { GetForegroundWindow() };
-            if h.0.is_null() {
-                None
-            } else {
-                Some(Target { hwnd: h, what: "foreground window (Valorant not running)" })
-            }
+    // `--foreground` forces the fallback target. This exists because a minimised
+    // Valorant is found correctly and then yields *zero* frames — WGC composites
+    // nothing for an iconic window (measured on the 12400F rig: 0 frames in 15 s,
+    // window parked at -32000,-32000 at 160x28). That makes an idle background
+    // Valorant useless as a smoke test for the encoder, so this flag lets the
+    // encode path be exercised against any live window without disturbing the
+    // game — or requiring the player to be sitting at it.
+    let force_foreground = std::env::args().any(|a| a == "--foreground");
+
+    if !force_foreground {
+        if let Some(h) = capture::find_valorant() {
+            return Some(Target { hwnd: h, what: "VALORANT" });
         }
+    }
+
+    let h = unsafe { GetForegroundWindow() };
+    if h.0.is_null() {
+        None
+    } else if force_foreground {
+        Some(Target { hwnd: h, what: "foreground window (--foreground)" })
+    } else {
+        Some(Target { hwnd: h, what: "foreground window (Valorant not running)" })
     }
 }
 
 fn arg(n: usize) -> Option<String> {
     std::env::args().nth(n)
+}
+
+/// State the hardware a measurement came from, rather than asserting which
+/// machine the reader is on.
+///
+/// This replaced a hardcoded "numbers from this machine are for correctness
+/// only" footer. That footer was written on the dev laptop and became actively
+/// misleading the moment the prototype ran on the benchmark rig, where it argued
+/// against the only numbers ADR §6 considers reportable. Printing the adapter
+/// lets the output be read correctly on either machine.
+fn print_provenance(dev: &d3d::Device) {
+    let adapter = dev
+        .adapter_name()
+        .unwrap_or_else(|_| "unknown adapter".to_string());
+    println!();
+    println!("measured on : {adapter}");
+    println!("ADR §6: overhead figures are reportable only from the i5-12400F / RTX 2060");
+    println!("rig. Figures from the Iris Xe dev laptop are correctness signals only.");
 }
 
 fn print_capture_stats(s: &capture::CaptureStats, secs: u64) {
@@ -127,6 +157,8 @@ fn cmd_capture() -> Result<()> {
     let dev = d3d::Device::new()?;
     let (cap, frames) = capture::Capture::for_window(&dev, t.hwnd, fps, 4)?;
 
+    cap.start()?;
+
     // Nothing consumes frames here, so recycle slots straight back or capture
     // would stall after four frames and report a misleading drop count.
     let deadline = Instant::now() + Duration::from_secs(secs);
@@ -139,8 +171,7 @@ fn cmd_capture() -> Result<()> {
     cap.stop()?;
 
     print_capture_stats(&cap.stats, secs);
-    println!("\nNote: numbers from this machine are for correctness only.\n\
-              Overhead figures are only meaningful on the RTX 2060 rig (ADR §6).");
+    print_provenance(&dev);
     Ok(())
 }
 
@@ -177,6 +208,10 @@ fn cmd_record() -> Result<()> {
 
     let cfg = encoder::EncoderConfig { width: w, height: h, fps, bitrate };
     let mut enc = encoder::Encoder::new(&dev, &out, &cfg)?;
+
+    // Only now: the encoder exists, so the first captured frame has somewhere to
+    // go. Starting capture any earlier spends the ring on sink-writer init.
+    cap.start()?;
 
     let mut encode_ns_total: u64 = 0;
     let mut encode_ns_max: u64 = 0;
@@ -224,7 +259,6 @@ fn cmd_record() -> Result<()> {
         Ok(m) => println!("\nwrote {out} — {:.1} MB", m.len() as f64 / 1e6),
         Err(e) => println!("\ncould not stat {out}: {e}"),
     }
-    println!("\nNote: numbers from this machine are for correctness only.\n\
-              Overhead figures are only meaningful on the RTX 2060 rig (ADR §6).");
+    print_provenance(&dev);
     Ok(())
 }

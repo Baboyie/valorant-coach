@@ -12,7 +12,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
-use windows::core::{Interface, Result, HSTRING};
+use windows::core::{Interface, Result};
 use windows::Foundation::TypedEventHandler;
 use windows::Graphics::Capture::{
     Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
@@ -264,13 +264,28 @@ impl Capture {
         // call is accepted and then ignored, so we do not pretend it succeeded.
         let _ = session.SetIsBorderRequired(false);
         let _ = session.SetIsCursorCaptureEnabled(false);
-        session.StartCapture()?;
 
         let frames = Frames { ring: Arc::clone(&ring), full_rx, free_tx: free_tx.clone() };
         Ok((
             Capture { _item: item, pool, session, stats, size },
             frames,
         ))
+    }
+
+    /// Begin delivering frames.
+    ///
+    /// Deliberately separate from construction. When `StartCapture` lived at the
+    /// end of `build`, capture began before the caller had built its encoder, and
+    /// the ring filled during Media Foundation's sink-writer setup — measured at
+    /// 43 frames lost that way on a 6-slot ring, against zero ring-full drops for
+    /// the same window with no encoder attached. Those are the opening frames of
+    /// the recording, and losing them silently is worse than losing them loudly:
+    /// they show up as "dropped, no free ring slot", which reads like encoder
+    /// backpressure under load rather than a startup ordering bug.
+    ///
+    /// Construct everything downstream first, then call this.
+    pub fn start(&self) -> Result<()> {
+        self.session.StartCapture()
     }
 
     pub fn stop(&self) -> Result<()> {
@@ -287,16 +302,83 @@ fn free_tx_clone_send(_ring: &Arc<Ring>, _slot: usize) -> std::result::Result<()
     Ok(())
 }
 
+/// The class Valorant gives its main render window. Distinctive enough to match
+/// on, and — unlike the title — not padded, localised, or decorated.
+const VALORANT_WINDOW_CLASS: &str = "VALORANTUnrealWindow";
+
 /// Find Valorant's window, if it is running.
 ///
-/// Event-driven detection (ADR §4) is the shipping design; this prototype just
-/// needs to locate the window once, so a single FindWindow is honest and cheap.
+/// This used to be a single `FindWindowW(None, "VALORANT")`. That silently never
+/// matched, and the failure mode was bad: `pick_target` falls back to the
+/// foreground window, so a benchmark would have measured the recorder capturing a
+/// terminal and reported it as a Valorant number.
+///
+/// Two things were wrong. The title is `"VALORANT  "` — padded with two trailing
+/// spaces — and `FindWindowW` matches titles exactly. But that alone does not
+/// explain it: measured on the 12400F rig, `FindWindowW` returns NULL even when
+/// handed the exact padded title *or* the class name, while `EnumWindows` walks
+/// straight to the same window. So the fix is not a better string; it is not
+/// relying on `FindWindowW` at all.
+///
+/// Matching on the class also keeps us at the lowest useful privilege. Reading a
+/// class name off an `HWND` needs no handle to the owning process, so this never
+/// calls `OpenProcess` on a Vanguard-protected game — consistent with ADR §1,
+/// which puts the burden on us to not look like a cheat rather than to merely
+/// avoid injecting. Title matching is kept only as a fallback in case the class
+/// changes, and is a prefix test so the padding cannot break it again.
 pub fn find_valorant() -> Option<HWND> {
-    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
-    let hwnd = unsafe { FindWindowW(None, &HSTRING::from("VALORANT")) }.ok()?;
-    if hwnd.0.is_null() {
-        None
-    } else {
-        Some(hwnd)
+    // BOOL lives in windows::core, not Win32::Foundation, as of the 0.62 crate.
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::LPARAM;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowTextW, IsWindowVisible,
+    };
+
+    struct Search {
+        hwnd: Option<HWND>,
     }
+
+    /// Read a window string via `f`, returning None for the empty case. The
+    /// buffer is stack-allocated: this runs once at startup, not per frame.
+    fn window_string(hwnd: HWND, f: fn(HWND, &mut [u16]) -> i32) -> Option<String> {
+        let mut buf = [0u16; 256];
+        let n = f(hwnd, &mut buf);
+        if n <= 0 {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&buf[..n as usize]))
+    }
+
+    unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        const CONTINUE: BOOL = BOOL(1);
+        const STOP: BOOL = BOOL(0);
+
+        // Valorant owns a fistful of invisible helper windows (IME, watchdog,
+        // Chrome_WidgetWin_0 from the embedded browser). Only the visible one is
+        // the game surface.
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return CONTINUE;
+        }
+
+        let matched = match window_string(hwnd, |h, b| unsafe { GetClassNameW(h, b) }) {
+            Some(class) if class == VALORANT_WINDOW_CLASS => true,
+            _ => window_string(hwnd, |h, b| unsafe { GetWindowTextW(h, b) })
+                .map(|t| t.trim_end().eq_ignore_ascii_case("VALORANT"))
+                .unwrap_or(false),
+        };
+
+        if matched {
+            let search = unsafe { &mut *(lparam.0 as *mut Search) };
+            search.hwnd = Some(hwnd);
+            return STOP;
+        }
+        CONTINUE
+    }
+
+    let mut search = Search { hwnd: None };
+    // EnumWindows reports failure when the callback stops it early, which is
+    // exactly what a successful find looks like here. The result is the struct,
+    // not the return code.
+    let _ = unsafe { EnumWindows(Some(enum_cb), LPARAM(&mut search as *mut _ as isize)) };
+    search.hwnd
 }

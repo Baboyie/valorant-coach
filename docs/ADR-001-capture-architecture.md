@@ -1,7 +1,8 @@
 # ADR-001 — Capture & Encode Architecture for the Valorant Recorder
 
-Status: **Proposed** — steps 1–4 of the implementation requirement. No prototype built yet.
-Date: 2026-08-14
+Status: **Accepted** — capture and encode both built and now exercised on the
+benchmark rig. The §29 acceptance benchmark itself is still outstanding (§9).
+Date: 2026-08-14 · Last measured: 2026-08-15 on the i5-12400F / RTX 2060 rig
 
 ---
 
@@ -204,18 +205,163 @@ stage directly:
   kept-frame timestamps, not assumed from the configured target, or it will lie
   whenever the scene is static.
 
-**Instrumentation gap to close before the §29 benchmark:** the prototype tracks
-only mean and max callback time. §19/§20 need a distribution — p50/p99/p99.9 —
-because a single max cannot distinguish one warmup spike from a recurring stall.
-That distinction is the whole point of measuring frame-time consistency.
+**Instrumentation gap — closed.** The callback now records a 64-bucket
+microsecond histogram alongside mean and max, and `capture`/`record` print
+p50/p99/p99.9. A single max cannot distinguish one warmup spike from a recurring
+stall, and that distinction is the whole point of measuring consistency.
 
-Still to build: the encoder stage (DXGI-surface input to the async MFT), the muxer,
-and the replay buffer. Capture is deliberately proven in isolation first so that a
-bad number later can be attributed to the right stage.
+**Encoder stage and muxer — built.** `record` submits DXGI-backed `IMFSample`s to
+an `IMFSinkWriter` with hardware transforms enabled, sharing our D3D11 device via
+`IMFDXGIDeviceManager`, and writes real per-sample timestamps. The replay buffer
+is still to build.
 
-## 8. Blockers
+---
 
-- §29 acceptance benchmarking is gated on physical access to the home rig.
+## 8. Measurements on the benchmark rig (2026-08-15)
+
+First run of the prototype on the i5-12400F / RTX 2060 / 16 GB rig. Display is
+**1080p 240 Hz** — note `recorder-proto/README.md` still describes expected
+arrival/keep ratios in terms of a 144 Hz panel.
+
+**Encoder probe confirms every §6 prediction.**
+
+```
+H.264   NVIDIA (NVENC)   NVIDIA H.264 Encoder MFT
+HEVC    NVIDIA (NVENC)   NVIDIA HEVC Encoder MFT
+selected: H.264 via NVIDIA (NVENC)
+```
+
+No AV1 encoder is registered — Turing cannot encode it, as predicted, so §22's AV1
+option stays deferred on evidence rather than on inference. The 12400F is an
+F-part with no iGPU, so NVENC is the only hardware encoder present; this rig
+cannot cross-check Quick Sync.
+
+**The duplicate-registration quirk is Intel-specific.** §7 recorded `MFTEnumEx`
+returning every encoder twice on Iris Xe. On NVIDIA each encoder appears exactly
+once. The dedup is still correct to keep — but it is working around vendor
+behaviour, not a universal property of `MFTEnumEx`.
+
+**Capture callback is tighter here than on the dev laptop**, which is the expected
+direction: a 65 W desktop part does not thermally throttle. Over a 20 s window,
+1920×1032, no game running:
+
+| | mean | p50 | p99 | p99.9 | max |
+|---|---|---|---|---|---|
+| capture only | 11.3 µs | 10 µs | 21 µs | 51 µs | 51 µs |
+| capture + encode | 12.3 µs | 11 µs | 27 µs | 63 µs | 88 µs |
+
+The laptop's 511 µs outlier did not reproduce. Encode submit averaged 37 µs with a
+1.3 ms maximum, the maximum being sink-writer warmup on the first sample.
+
+**End-to-end encode works on NVENC.** 533 frames arrived, 533 kept, 533 accepted,
+zero dropped; a 9.5 MB MP4 with `ftyp`/`mdat`/`moov`/`avc1` intact. Windows reports
+the file as **26.59 fps**, matching the measured keep rate rather than the
+configured 60 — the variable-frame-rate timestamping in §7 behaving as designed.
+A container that claimed 60 fps here would have been lying.
+
+### The founding question, answered: WGC captures Valorant
+
+This is what the prototype existed to determine, and it had never been run against
+the live game before today.
+
+Capturing the real Valorant window, 15 s at a 60 fps target:
+
+```
+target : VALORANT
+frames arrived : 890 (59.3/s)   frames kept : 890 (59.3/s)
+dropped by pacing : 0           dropped, ring full : 0
+callback  mean 11.0 us   p50 10   p99 21   p99.9 43   max 43.1 us
+```
+
+Vanguard did not interfere: no block, no crash, no teardown. Capture cost against
+the live game is indistinguishable from capture against an ordinary desktop window.
+
+**And the frames contain the game.** Frame count alone would not have proved this —
+§1 records that OBS Game Capture returns *black frames* on Vanguard titles, which
+looks like success from every counter we track. A 12 s recording was decoded and
+sampled: mean luminance 42.3 on a 0–255 scale, standard deviation 30.1, 247 distinct
+colours across the sampled grid, and the decoded frame is plainly the Valorant
+collection screen. A blacked-out capture would have shown near-zero variance.
+
+So the answer to "can we capture Valorant with extremely low overhead?" is **yes for
+capture**, on this hardware, with the caveat that all of the above was measured with
+the game idle in menus. Overhead *while playing* is still §29's job.
+
+### Three defects this run exposed
+
+**1. `find_valorant` never matched, and failed toward a plausible-looking answer.**
+The lookup was `FindWindowW(None, "VALORANT")`. Valorant's title is `"VALORANT  "`
+with two trailing spaces and `FindWindowW` matches exactly — but that is not the
+whole story: on this rig `FindWindowW` returns NULL even when given the exact
+padded title *or* the class name, while `EnumWindows` walks straight to the window.
+Rewritten to enumerate and match the class `VALORANTUnrealWindow`, with a
+trimmed-title fallback.
+
+This mattered more than a missed window. `pick_target` falls back to the foreground
+window, so the benchmark would have measured the recorder capturing a *terminal*
+and labelled the result Valorant. A wrong number that looks right is worse than a
+crash.
+
+Matching on class also needs no handle to the game process — no `OpenProcess`
+against a Vanguard-protected target, which is the right privilege level to want.
+
+**2. Capture started before the encoder existed, silently losing the opening
+frames.** `StartCapture` was the last statement of capture construction, so frames
+began arriving while the caller was still building its encoder, and the ring filled
+during Media Foundation's sink-writer setup. Measured: **43 frames lost** on a
+6-slot ring, against **zero** for the same window with no encoder attached.
+
+They surfaced as "dropped, no free ring slot", which reads like encoder
+backpressure under load — a startup ordering bug wearing the costume of a
+performance result. `StartCapture` is now a separate `Capture::start()` called
+after everything downstream is constructed. Re-measured: 533/533 frames kept, zero
+drops, and the encode-submit maximum fell from 3.4 ms to 1.3 ms.
+
+**3. The output footer asserted the wrong machine.** Every run printed "numbers
+from this machine are for correctness only — overhead figures are only meaningful
+on the RTX 2060 rig". Written on the laptop, true there, and actively misleading
+the moment it ran *on* the RTX 2060 rig, where it argued against the only numbers
+§6 considers reportable. Runs now print the DXGI adapter description instead, so
+the output states its own provenance rather than assuming the reader's machine.
+
+### Known gap: capture-item size changes are not handled
+
+The frame pool and texture ring are sized once from `GraphicsCaptureItem.Size()` at
+session start and never resized. A session begun against a **minimised** Valorant
+takes its size from the iconic window placeholder — measured at 160×28 at
+(-32000,-32000) — and then delivers zero frames, because WGC composites nothing for
+an iconic window. Restoring the window mid-session would not fix it: the ring is
+already the wrong shape.
+
+Observed twice in one session, because Valorant was minimised between runs:
+
+- `capture` against the iconic window: session builds, **0 frames** in 15 s.
+- `record` against the iconic window: the encoder is configured `160x28` and Media
+  Foundation rejects the media type outright — `0xC00D36B4`
+  (`MF_E_INVALIDMEDIATYPE`), since that is below NVENC's minimum frame size.
+
+The `record` failure is at least loud. The `capture` one is silent, and a benchmark
+run that captured nothing would have looked like a spectacularly low-overhead
+recorder rather than a broken one.
+
+Real users alt-tab and change resolution mid-match, so shipping needs
+`Direct3D11CaptureFramePool.Recreate` on size change. For the benchmark it is
+enough to know the rule: **start the recorder only when Valorant is on screen at
+its final resolution.** `bench/Invoke-Benchmark.ps1` now refuses to start a run
+against a minimised game for exactly this reason.
+
+## 9. Blockers
+
+- ~~§29 acceptance benchmarking is gated on physical access to the home rig.~~
+  **Resolved** — the prototype now builds and runs there; toolchain, PresentMon and
+  harness are installed.
+- §29 acceptance benchmarking is now gated on a **play session**. The harness in
+  `bench/` needs a human flying an identical Range route six times (three baseline,
+  three recording) with Valorant on screen. Nothing about that is automatable, and
+  faking it with a static screen would measure the wrong thing entirely — WGC is
+  change-driven, so an idle scene understates both capture and encode load.
+- ShadowPlay and OBS columns of the §5 matrix are not installed on this rig, so the
+  first table will be baseline × ours only.
 
 ### Note on the toolchain install
 
@@ -225,6 +371,20 @@ existing Build Tools instance, and `setup.exe modify` / `install` / `repair` all
 return **87** once an instance exists with `installationComplete` blank. The route
 that works is running the **bootstrapper** (`vs_BuildTools.exe`) directly with
 `--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended`.
+
+**Benchmark rig, 2026-08-15.** The bootstrapper route worked first time on a clean
+machine (no prior VS instance, so the 87 problem never arose). Toolchain deliberately
+installed to `D:` because `C:` had only 22 GB free:
+
+| | |
+|---|---|
+| Rust 1.97.1 | `RUSTUP_HOME=D:\dev\rustup`, `CARGO_HOME=D:\dev\cargo` |
+| MSVC 14.44.35207 | `D:\dev\BuildTools` (`--installPath`, plus `--nocache`) |
+| PresentMon 2.5.1 | `D:\dev\tools\PresentMon.exe` — **console build**, see `bench/README.md` |
+
+`--installPath` does **not** relocate the Windows SDK; 10.0.26100.0 went to `C:` and
+cost ~2.5 GB. Budget for that on any drive-constrained machine. Release build of the
+prototype from a cold cargo registry: 44 s.
 
 ---
 

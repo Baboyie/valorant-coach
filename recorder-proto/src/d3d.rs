@@ -55,6 +55,24 @@ impl Device {
         Ok(Device { device, context })
     }
 
+    /// The DXGI description of the adapter this device came up on.
+    ///
+    /// Printed with every measurement on purpose. ADR §6 warns that conflating
+    /// the dev laptop with the benchmark rig would invalidate every number we
+    /// produce, and the cheapest defence is for each run to state which silicon
+    /// it ran on rather than trusting whoever pastes the output to remember.
+    pub fn adapter_name(&self) -> Result<String> {
+        let dxgi: IDXGIDevice = self.device.cast()?;
+        let adapter = unsafe { dxgi.GetAdapter()? };
+        let desc = unsafe { adapter.GetDesc()? };
+        let end = desc
+            .Description
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(desc.Description.len());
+        Ok(String::from_utf16_lossy(&desc.Description[..end]))
+    }
+
     /// The WinRT-flavoured handle to the same device, which is what
     /// `Direct3D11CaptureFramePool` wants.
     pub fn winrt_device(&self) -> Result<IDirect3DDevice> {
