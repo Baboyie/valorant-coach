@@ -83,7 +83,31 @@ fn pick_target() -> Option<Target> {
     // Valorant useless as a smoke test for the encoder, so this flag lets the
     // encode path be exercised against any live window without disturbing the
     // game — or requiring the player to be sitting at it.
-    let force_foreground = std::env::args().any(|a| a == "--foreground");
+    // `--hwnd <handle>` aims at one specific window. This is a test affordance,
+    // not a product feature: paths like resize handling are otherwise untestable
+    // from a script, because Windows refuses SetForegroundWindow to a background
+    // process, so a harness cannot put its chosen window in front to be picked up
+    // by --foreground.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--hwnd") {
+        if let Some(raw) = args.get(i + 1) {
+            let trimmed = raw.trim_start_matches("0x").trim_start_matches("0X");
+            let parsed = if raw.starts_with("0x") || raw.starts_with("0X") {
+                usize::from_str_radix(trimmed, 16).ok()
+            } else {
+                raw.parse::<usize>().ok()
+            };
+            if let Some(v) = parsed {
+                return Some(Target {
+                    hwnd: windows::Win32::Foundation::HWND(v as *mut _),
+                    what: "explicit --hwnd",
+                });
+            }
+            eprintln!("could not parse --hwnd {raw}");
+        }
+    }
+
+    let force_foreground = args.iter().any(|a| a == "--foreground");
 
     if !force_foreground {
         if let Some(h) = capture::find_valorant() {
@@ -130,6 +154,15 @@ fn print_capture_stats(s: &capture::CaptureStats, secs: u64) {
     println!("frames kept                    : {kept}  ({:.1}/s)", kept as f64 / secs as f64);
     println!("dropped by pacing              : {}", s.dropped_pacing.load(Ordering::Relaxed));
     println!("dropped, no free ring slot     : {}", s.dropped_ring_full.load(Ordering::Relaxed));
+    let mismatched = s.dropped_size_mismatch.load(Ordering::Relaxed);
+    println!("dropped, target resized        : {mismatched}");
+    if mismatched > 0 {
+        // Worth spelling out: this is the target changing shape, not the recorder
+        // falling behind, and the two would otherwise look identical in a table.
+        println!("  (target was minimised or resized; frame pool rebuilt {} time(s).",
+                 s.pool_recreations.load(Ordering::Relaxed));
+        println!("   recording resumes by itself once it returns to its original size)");
+    }
     println!();
     println!("capture callback  mean : {:>6.1} us", s.mean_callback_us());
     println!("                  p50  : {:>6} us", s.percentile_us(0.50));
@@ -163,6 +196,11 @@ fn cmd_capture() -> Result<()> {
     // would stall after four frames and report a misleading drop count.
     let deadline = Instant::now() + Duration::from_secs(secs);
     while Instant::now() < deadline {
+        // The recv timeout guarantees this runs ~10x/s even when no frames are
+        // arriving, which is exactly the case a resize can leave us in.
+        if let Ok(true) = cap.poll_resize() {
+            println!("  (capture target resized; frame pool rebuilt)");
+        }
         match frames.full_rx.recv_timeout(Duration::from_millis(100)) {
             Ok((slot, _)) => { let _ = frames.free_tx.send(slot); }
             Err(_) => {}
@@ -219,6 +257,9 @@ fn cmd_record() -> Result<()> {
 
     let deadline = Instant::now() + Duration::from_secs(secs);
     while Instant::now() < deadline {
+        if let Ok(true) = cap.poll_resize() {
+            println!("  (capture target resized; frame pool rebuilt, recording continues)");
+        }
         match frames.full_rx.recv_timeout(Duration::from_millis(100)) {
             Ok((slot, ts)) => {
                 let t0 = Instant::now();

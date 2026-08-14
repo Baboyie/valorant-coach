@@ -7,7 +7,7 @@
 //! slower than that runs on the compositor's schedule and is the most likely way
 //! this recorder could ever perturb the game (ADR §3).
 
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
@@ -17,6 +17,7 @@ use windows::Foundation::TypedEventHandler;
 use windows::Graphics::Capture::{
     Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
 };
+use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::SizeInt32;
 use windows::Win32::Foundation::HWND;
@@ -25,6 +26,14 @@ use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 
 use crate::d3d;
+
+/// Smallest capture target we will build a session for, per axis.
+///
+/// Chosen to sit above the iconic-window placeholder (160x28) and below any real
+/// window someone would record. Hardware H.264 encoders also have their own
+/// minimums, so a tiny target is unusable downstream even where WGC would allow
+/// it.
+const MIN_CAPTURE_DIMENSION: i32 = 64;
 
 /// Counters written from the capture callback and read from the reporting thread.
 ///
@@ -35,6 +44,12 @@ pub struct CaptureStats {
     pub kept: AtomicU64,
     pub dropped_pacing: AtomicU64,
     pub dropped_ring_full: AtomicU64,
+    /// Frames whose size did not match the ring, and the number of times the
+    /// frame pool had to be rebuilt because the capture target changed shape.
+    /// Both are expected to be non-zero in ordinary use — players alt-tab — so
+    /// they are reported rather than treated as errors.
+    pub dropped_size_mismatch: AtomicU64,
+    pub pool_recreations: AtomicU64,
     pub callback_ns_total: AtomicU64,
     pub callback_ns_max: AtomicU64,
     /// Fixed-bucket histogram of callback durations, in microseconds.
@@ -53,6 +68,8 @@ impl Default for CaptureStats {
             kept: AtomicU64::new(0),
             dropped_pacing: AtomicU64::new(0),
             dropped_ring_full: AtomicU64::new(0),
+            dropped_size_mismatch: AtomicU64::new(0),
+            pool_recreations: AtomicU64::new(0),
             callback_ns_total: AtomicU64::new(0),
             callback_ns_max: AtomicU64::new(0),
             hist: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -118,6 +135,8 @@ pub struct Capture {
     _item: GraphicsCaptureItem,
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
+    winrt_device: IDirect3DDevice,
+    resize_pending: Arc<AtomicBool>,
     pub stats: Arc<CaptureStats>,
     pub size: SizeInt32,
 }
@@ -145,6 +164,25 @@ impl Capture {
         ring_len: usize,
     ) -> Result<(Capture, Frames)> {
         let size: SizeInt32 = item.Size()?;
+
+        // A minimised window reports the iconic placeholder — measured at 160x28
+        // at (-32000,-32000) — and WGC then composites nothing for it. Building a
+        // session on that size produces a recorder that captures zero frames
+        // forever, and an encoder configured at 160x28 which Media Foundation
+        // rejects outright with MF_E_INVALIDMEDIATYPE (0xC00D36B4), since that is
+        // below NVENC's minimum. Refuse up front: the silent version of this
+        // failure looks exactly like a spectacularly low-overhead recorder.
+        if size.Width < MIN_CAPTURE_DIMENSION || size.Height < MIN_CAPTURE_DIMENSION {
+            return Err(windows::core::Error::new(
+                windows::Win32::Foundation::E_INVALIDARG,
+                format!(
+                    "capture target is {}x{}, which is too small to record — \
+                     it is probably minimised. Restore it and try again.",
+                    size.Width, size.Height
+                ),
+            ));
+        }
+
         let winrt_device = dev.winrt_device()?;
 
         let mut textures = Vec::with_capacity(ring_len);
@@ -192,6 +230,26 @@ impl Capture {
         let cb_stats = Arc::clone(&stats);
         let cb_ring = Arc::clone(&ring);
         let cb_deadline = Arc::clone(&next_deadline);
+        // Set by the callback, acted on by `poll_resize` on the owning thread.
+        // An AtomicBool crosses the closure boundary; the WinRT device does not —
+        // `IDirect3DDevice` is not `Send`, which is the type system agreeing that
+        // pool management does not belong on the compositor's thread.
+        let resize_pending = Arc::new(AtomicBool::new(false));
+        let cb_resize = Arc::clone(&resize_pending);
+        // Last content size seen, packed as (w << 32) | h.
+        //
+        // Without this, "content != ring" is true for *every* frame while the
+        // window sits at the wrong size, so every one of them requests a rebuild.
+        // Measured on the first version: two resizes produced eight pool
+        // rebuilds. Recreate allocates a pool and its textures, so that is an
+        // allocation storm driven by frame rate — the precise shape of problem
+        // §19 exists to prevent. Signal on *change*, not on difference.
+        let last_content = Arc::new(AtomicI64::new(
+            ((size.Width as i64) << 32) | (size.Height as i64 & 0xFFFF_FFFF),
+        ));
+        let cb_last_content = Arc::clone(&last_content);
+        let ring_w = size.Width;
+        let ring_h = size.Height;
 
         pool.FrameArrived(&TypedEventHandler::<Direct3D11CaptureFramePool, windows::core::IInspectable>::new(
             move |pool, _| {
@@ -203,6 +261,50 @@ impl Capture {
                     Err(_) => return Ok(()),
                 };
                 cb_stats.arrived.fetch_add(1, Ordering::Relaxed);
+
+                // The capture target can change shape underneath us at any time:
+                // the player alt-tabs, minimises, or changes resolution. WGC keeps
+                // handing back frames sized to the *pool*, so unless the pool is
+                // rebuilt the content is wrong from here on.
+                //
+                // Rebuilding is only half of it. The ring textures and the encoder
+                // were both sized once at session start, and Media Foundation
+                // cannot change resolution mid-stream, so a differently-sized
+                // frame has nowhere valid to go. We rebuild the pool — which keeps
+                // WGC delivering, so recording resumes by itself the moment the
+                // window returns to its original size — and drop the frames that
+                // do not fit rather than corrupt the stream with them.
+                //
+                // Dropping is the honest behaviour for a prototype. Scaling into
+                // the ring would need a blit or a video-processor pass, and doing
+                // that silently would hide a resolution change from the person
+                // reading the output.
+                let content = frame.ContentSize().unwrap_or(SizeInt32 {
+                    Width: ring_w,
+                    Height: ring_h,
+                });
+                let packed =
+                    ((content.Width as i64) << 32) | (content.Height as i64 & 0xFFFF_FFFF);
+                let changed = cb_last_content.swap(packed, Ordering::Relaxed) != packed;
+
+                if content.Width != ring_w || content.Height != ring_h {
+                    cb_stats.dropped_size_mismatch.fetch_add(1, Ordering::Relaxed);
+                    if !changed {
+                        // Already known to be the wrong shape; the rebuild for
+                        // this size has been requested. Just drop.
+                        cb_stats.record_callback(t0.elapsed().as_nanos() as u64);
+                        return Ok(());
+                    }
+                    // Flag it and leave. The rebuild itself happens on the owning
+                    // thread via `poll_resize`, because `Recreate` allocates a new
+                    // pool and new textures — exactly the steady-state allocation
+                    // §19 forbids, and doing it here would put it on the
+                    // compositor's thread, which is the one path this file exists
+                    // to keep cheap.
+                    cb_resize.store(true, Ordering::Relaxed);
+                    cb_stats.record_callback(t0.elapsed().as_nanos() as u64);
+                    return Ok(());
+                }
 
                 let ts = frame.SystemRelativeTime().map(|t| t.Duration).unwrap_or(0);
 
@@ -267,9 +369,45 @@ impl Capture {
 
         let frames = Frames { ring: Arc::clone(&ring), full_rx, free_tx: free_tx.clone() };
         Ok((
-            Capture { _item: item, pool, session, stats, size },
+            Capture {
+                _item: item,
+                pool,
+                session,
+                winrt_device,
+                resize_pending,
+                stats,
+                size,
+            },
             frames,
         ))
+    }
+
+    /// Rebuild the frame pool if the capture target changed shape.
+    ///
+    /// Call this from the consumer loop. Returns true if a rebuild happened.
+    ///
+    /// The pool is always rebuilt back to the size the ring and the encoder were
+    /// built for, never to the size that just arrived. We cannot use a
+    /// differently-sized frame — Media Foundation will not change resolution
+    /// mid-stream — so the goal is not to follow the window, it is to be ready
+    /// the moment the window comes back. A player who alt-tabs and returns gets
+    /// their recording resumed without touching anything.
+    ///
+    /// The allocation lives here rather than in the callback deliberately: this
+    /// runs on the consumer's thread, where a stall costs a queued frame, not on
+    /// the compositor's, where it would cost the game (ADR §3, §19).
+    pub fn poll_resize(&self) -> Result<bool> {
+        if !self.resize_pending.swap(false, Ordering::Relaxed) {
+            return Ok(false);
+        }
+        self.pool.Recreate(
+            &self.winrt_device,
+            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            2,
+            self.size,
+        )?;
+        self.stats.pool_recreations.fetch_add(1, Ordering::Relaxed);
+        Ok(true)
     }
 
     /// Begin delivering frames.

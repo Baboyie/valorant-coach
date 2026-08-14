@@ -344,11 +344,42 @@ The `record` failure is at least loud. The `capture` one is silent, and a benchm
 run that captured nothing would have looked like a spectacularly low-overhead
 recorder rather than a broken one.
 
-Real users alt-tab and change resolution mid-match, so shipping needs
-`Direct3D11CaptureFramePool.Recreate` on size change. For the benchmark it is
-enough to know the rule: **start the recorder only when Valorant is on screen at
-its final resolution.** `bench/Invoke-Benchmark.ps1` now refuses to start a run
-against a minimised game for exactly this reason.
+**Resolved 2026-08-15.** Two halves:
+
+*Refuse to start on a degenerate target.* A session whose capture item is smaller
+than 64 px on either axis now fails immediately with `E_INVALIDARG` and a message
+naming the size, instead of producing a recorder that captures nothing or an
+encoder configuration Media Foundation rejects.
+
+*Survive a resize mid-session.* The callback compares each frame's `ContentSize`
+against the ring, and on a change flags the owning thread, which calls
+`Direct3D11CaptureFramePool.Recreate` from `Capture::poll_resize`. Frames that do
+not match the ring are dropped and counted rather than fed to an encoder that
+cannot change resolution mid-stream, and capture resumes by itself once the target
+returns to its original size.
+
+Two things this cost, both worth recording:
+
+- **The rebuild does not belong in the callback.** The first version called
+  `Recreate` there and did not compile: `IDirect3DDevice` is not `Send`. That was
+  the type system being right for a deeper reason — `Recreate` allocates a pool and
+  its textures, which is exactly the steady-state allocation §19 forbids, and doing
+  it on the compositor's thread would put it on the one path this design exists to
+  keep cheap.
+- **Signal on change, not on difference.** Flagging whenever `content != ring`
+  meant every frame arriving at the wrong size requested another rebuild: measured
+  at **eight pool rebuilds for two resizes**. Now the last-seen content size is
+  tracked and only a genuine change signals — re-measured at **one rebuild per
+  resize**, holding steady across twelve forced redraws while mismatched.
+
+Verified against a window resized underneath a live capture: one rebuild, seven
+frames dropped as mismatched, and capture resuming on its own afterwards. The
+degenerate-size guard was verified separately by raising the threshold so an
+ordinary window trips it.
+
+Still true for the benchmark, since dropped frames are still lost frames: **start
+the recorder only when Valorant is on screen at its final resolution.**
+`bench/Invoke-Benchmark.ps1` refuses to start a run against a minimised game.
 
 ## 9. §29 benchmark — first results (provisional)
 
@@ -426,8 +457,7 @@ good.
   re-run, per §9. Until then no FPS claim ships, per §1.
 - ShadowPlay and OBS columns of the §5 matrix are not installed on this rig, so the
   current table is baseline × ours only.
-- Replay buffer is unbuilt, and `Direct3D11CaptureFramePool.Recreate` for
-  size changes is unimplemented (§8, "Known gap").
+- Replay buffer is unbuilt. Capture-item size changes are now handled (§8).
 
 ### Note on the toolchain install
 

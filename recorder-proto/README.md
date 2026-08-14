@@ -78,6 +78,37 @@ zero frames — WGC composites nothing for an iconic window. That makes a backgr
 game useless as a smoke test for the encoder, and this flag lets the encode path be
 exercised without needing anyone sitting at the game.
 
+### `--hwnd <handle>` — target one specific window
+
+```bash
+cargo run --release -- capture 20 60 --hwnd 0x690C0E
+```
+
+Accepts hex (`0x…`) or decimal. A **test affordance, not a product feature**: it
+exists because Windows refuses `SetForegroundWindow` to a background process, so a
+test script cannot put its chosen window in front for `--foreground` to pick up.
+Without it, the resize path below cannot be exercised from a script at all.
+
+## Behaviour when the target changes shape
+
+Players alt-tab, minimise, and change resolution mid-match, so this is ordinary
+operation rather than an error case.
+
+- **Starting** against a target smaller than 64 px on either axis fails immediately
+  with a message naming the size. A minimised window reports an iconic placeholder
+  (160×28 for Valorant), which would otherwise produce a recorder that captures
+  nothing at all, or an encoder configuration Media Foundation rejects with
+  `MF_E_INVALIDMEDIATYPE`.
+- **Resizing mid-session** is detected, the frame pool is rebuilt once, and frames
+  that no longer match are dropped and reported under `dropped, target resized`.
+  They are dropped rather than scaled because the encoder cannot change resolution
+  mid-stream. Capture resumes on its own when the window returns to its original
+  size — no restart needed.
+
+`dropped, target resized` being non-zero is therefore information, not a fault: it
+says the window changed shape, which is a different statement from the recorder
+falling behind (`dropped, no free ring slot`).
+
 ## What to read in the output
 
 **Callback worst-case is the number that matters, not the mean.** Per §20, a
