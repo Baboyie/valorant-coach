@@ -1,0 +1,22 @@
+# secrets
+.env
+.env.local
+
+# node
+node_modules/
+npm-debug.log*
+
+# rust / recorder-proto
+target/
+**/target/
+
+# logs and local scratch
+*.log
+*.zip
+
+# recorder output
+*.mp4
+
+# os
+Thumbs.db
+Desktop.ini

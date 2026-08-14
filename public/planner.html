@@ -1,0 +1,1750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEBRIEF — Tactical Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-void:#0A0E12;
+    --bg-panel:#12181F;
+    --bg-panel-raised:#1A222B;
+    --edge:#2A343F;
+    --ink:#E8ECEF;
+    --ink-dim:#8A95A1;
+    --red:#FF3B4E;
+    --cyan:#4DE8D8;
+    --amber:#FFB020;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg-void);
+    color:var(--ink);
+    font-family:'IBM Plex Sans',sans-serif;
+    min-height:100vh;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .disp{font-family:'Chakra Petch',sans-serif; text-transform:uppercase; letter-spacing:0.04em;}
+  .mono{font-family:'JetBrains Mono',monospace;}
+  .wrap{max-width:1400px; margin:0 auto; padding:28px 20px 60px;}
+
+  .brand{display:flex; align-items:baseline; gap:10px; margin-bottom:4px;}
+  .brand .mark{color:var(--red); font-size:13px; letter-spacing:0.25em;}
+  .brand h1{font-size:28px; margin:0; font-weight:700;}
+  .brand .sub{color:var(--ink-dim); font-size:12px; margin-top:2px;}
+  .brand a{color:var(--ink-dim); font-size:11px; text-decoration:none; border-bottom:1px solid var(--edge);}
+  .brand a:hover{color:var(--cyan); border-color:var(--cyan);}
+
+  .notch{
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+    background:var(--bg-panel);
+    border:1px solid var(--edge);
+  }
+
+  label{display:block; font-size:10px; color:var(--ink-dim); letter-spacing:0.12em; margin-bottom:6px;}
+  input,select{
+    width:100%; background:var(--bg-panel-raised); border:1px solid var(--edge); color:var(--ink);
+    padding:9px 11px; font-family:'JetBrains Mono',monospace; font-size:12.5px; border-radius:2px;
+    outline:none;
+  }
+  input:focus,select:focus{border-color:var(--cyan);}
+
+  .console{padding:16px; margin-top:22px;}
+  .console-row{display:grid; grid-template-columns: 1fr 0.7fr 1.4fr auto auto auto; gap:10px; align-items:end;}
+  @media(max-width:900px){ .console-row{grid-template-columns:1fr 1fr;} }
+
+  button.act{
+    background:var(--bg-panel-raised); color:var(--ink); border:1px solid var(--edge);
+    padding:9px 14px; font-weight:600; font-family:'Chakra Petch',sans-serif;
+    letter-spacing:0.08em; cursor:pointer; font-size:12px; white-space:nowrap;
+  }
+  button.act:hover{border-color:var(--cyan); color:var(--cyan);}
+  button.act.primary{background:var(--red); color:#0A0E12; border-color:var(--red);}
+  button.act.primary:hover{background:#ff5566; color:#0A0E12;}
+  button.act:disabled{opacity:0.4; cursor:not-allowed; border-color:var(--edge); color:var(--ink-dim);}
+
+  .status{margin-top:12px; font-size:12px; color:var(--cyan); min-height:16px;}
+  .status.err{color:var(--red);}
+
+  /* ---- main 3-column layout ---- */
+  .stage{display:grid; grid-template-columns: 168px minmax(0,1fr) 312px; gap:16px; margin-top:20px; align-items:start;}
+  @media(max-width:1100px){ .stage{grid-template-columns:1fr;} }
+
+  .panel{padding:14px;}
+  .panel h3, .roster h3{font-family:'Chakra Petch',sans-serif; text-transform:uppercase; font-size:11px;
+            letter-spacing:0.12em; color:var(--ink-dim); margin:0 0 10px; font-weight:600;}
+  .panel h3 + h3{margin-top:18px;}
+
+  .toolgrid{display:grid; grid-template-columns:1fr 1fr; gap:6px;}
+  .tool{
+    background:var(--bg-panel-raised); border:1px solid var(--edge); color:var(--ink-dim);
+    padding:9px 4px; font-size:10px; font-family:'Chakra Petch',sans-serif; letter-spacing:0.06em;
+    text-transform:uppercase; cursor:pointer; text-align:center; border-radius:2px;
+  }
+  .tool:hover{color:var(--ink); border-color:var(--ink-dim);}
+  .tool.on{background:rgba(77,232,216,0.14); border-color:var(--cyan); color:var(--cyan);}
+
+  .swatches{display:flex; gap:6px; flex-wrap:wrap;}
+  .sw{width:24px; height:24px; border-radius:2px; cursor:pointer; border:2px solid transparent;}
+  .sw.on{border-color:var(--ink);}
+
+  .stack{display:flex; flex-direction:column; gap:6px;}
+
+  /* ---- map canvas ---- */
+  .board{padding:10px; position:relative;}
+  .boardwrap{position:relative; width:100%; aspect-ratio:1/1; background:#05080B; border:1px solid var(--edge);}
+  svg.map{position:absolute; inset:0; width:100%; height:100%; touch-action:none; cursor:crosshair;}
+  svg.map.sel{cursor:default;}
+  .maphint{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--ink-dim); font-size:12px; font-family:'JetBrains Mono',monospace; pointer-events:none;
+  }
+  .callout-txt{font-family:'JetBrains Mono',monospace; font-size:13px; fill:rgba(232,236,239,0.55);
+               paint-order:stroke; stroke:#05080B; stroke-width:3px; stroke-linejoin:round; pointer-events:none;}
+  .obj-sel{stroke:var(--cyan); stroke-width:2; fill:none; stroke-dasharray:4 3; pointer-events:none;}
+
+  /* ---- agents / abilities ---- */
+  /* ---- roster column: agent grid with the selected agent's kit beneath ---- */
+  .roster{padding:14px;}
+  .agentgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(52px,1fr)); gap:6px;}
+  .agent-tile{position:relative; cursor:pointer; border:1px solid var(--edge);
+              border-radius:3px; background:var(--bg-panel-raised); overflow:hidden;}
+  .agent-tile img{display:block; width:100%; aspect-ratio:1/1; object-fit:contain;}
+  .agent-tile .nm{display:block; font-size:8.5px; letter-spacing:0.06em; text-align:center;
+                  padding:3px 2px 4px; color:var(--ink-dim); text-transform:uppercase;
+                  font-family:'Chakra Petch',sans-serif; white-space:nowrap;
+                  overflow:hidden; text-overflow:ellipsis;}
+  .agent-tile:hover{border-color:var(--ink-dim);}
+  .agent-tile:hover .nm{color:var(--ink);}
+  .agent-tile.on{border-color:var(--cyan); background:rgba(77,232,216,0.12);}
+  .agent-tile.on .nm{color:var(--cyan);}
+
+  .kit{border-top:1px solid var(--edge); padding-top:14px; margin-top:14px;}
+  .kit-head{display:flex; align-items:center; gap:10px; margin-bottom:14px; min-height:46px;}
+  .kit-head img{width:46px; height:46px; object-fit:contain; background:var(--bg-panel-raised);
+                border:1px solid var(--edge); border-radius:3px;}
+  .kit-head .who{font-family:'Chakra Petch',sans-serif; text-transform:uppercase;
+                 font-size:15px; letter-spacing:0.06em;}
+  .kit-head .role{font-size:10px; color:var(--ink-dim); letter-spacing:0.12em;}
+  .kit-empty{color:var(--ink-dim); font-size:11.5px; font-style:italic; line-height:1.6;}
+
+  .abilrow{display:grid; grid-template-columns:repeat(4,1fr); gap:8px;}
+  .abil{background:var(--bg-panel-raised); border:1px solid var(--edge);
+        border-radius:3px; cursor:pointer; padding:7px 4px 5px;
+        display:flex; flex-direction:column; align-items:center; gap:5px;}
+  .abil img{width:34px; height:34px; object-fit:contain;}
+  .abil .k{font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--red);}
+  .abil .an{font-size:8.5px; color:var(--ink-dim); text-align:center; line-height:1.25;
+            text-transform:uppercase; letter-spacing:0.04em;}
+  .abil:hover{border-color:var(--ink-dim);}
+  .abil:hover .an{color:var(--ink);}
+  .abil.on{border-color:var(--cyan); background:rgba(77,232,216,0.12);}
+  .abil.on .an{color:var(--cyan);}
+  .abil .sz{font-family:'JetBrains Mono',monospace; font-size:8px; color:var(--amber);}
+
+  .saved{display:flex; flex-direction:column; gap:4px; max-height:170px; overflow-y:auto;}
+
+  /* Full-width now, so lay the saved strategies out in columns instead of one
+     tall scrolling list — more of them visible at once. */
+  .savedbar{padding:14px; margin-top:16px;}
+  .savedbar .saved{display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr));
+                   gap:6px; max-height:none; overflow:visible;}
+  .saveitem{display:flex; align-items:center; gap:6px; background:var(--bg-panel-raised);
+            border:1px solid var(--edge); padding:7px 8px; border-radius:2px; font-size:11.5px;}
+  .saveitem .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;}
+  .saveitem .nm:hover{color:var(--cyan);}
+  .saveitem .mp{font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--ink-dim);}
+  .saveitem .del{color:var(--ink-dim); cursor:pointer; font-size:14px; line-height:1;}
+  .saveitem .del:hover{color:var(--red);}
+  .muted{color:var(--ink-dim); font-size:11px; font-style:italic;}
+
+  /* Icon that follows the cursor while dragging out of the palette. */
+  .drag-ghost{
+    position:fixed; z-index:9999; pointer-events:none;
+    width:46px; height:46px; margin:-23px 0 0 -23px;
+    border-radius:50%; background:rgba(5,8,11,0.85);
+    border:2px solid var(--cyan);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0.8; transition:transform .08s ease, border-color .08s ease;
+  }
+  .drag-ghost img{width:76%; height:76%; object-fit:contain;}
+  .drag-ghost.over{border-color:var(--amber); opacity:1; transform:scale(1.12);}
+
+  /* Own the drag gesture completely. Without -webkit-user-drag:none the browser
+     starts its own native image drag, which swallows pointermove/pointerup and
+     leaves our drag state stuck. */
+  .agentgrid img, .abil, .abil img{
+    touch-action:none;
+    -webkit-user-drag:none;
+    -webkit-user-select:none;
+    user-select:none;
+  }
+
+  .hintbar{margin-top:10px; font-size:11px; color:var(--ink-dim); line-height:1.6;
+           border-left:2px solid var(--edge); padding-left:10px;}
+  .hintbar b{color:var(--amber); font-weight:600;}
+  .foot{margin-top:36px; font-size:11px; color:var(--ink-dim); text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="brand">
+    <span class="mark disp">// DEBRIEF</span>
+    <h1 class="disp">TACTICAL PLANNER</h1>
+  </div>
+  <div class="sub" style="color:var(--ink-dim);font-size:12px;margin-bottom:2px;">
+    Draw executes, place utility, save strategies · <a href="/">← match analyzer</a>
+  </div>
+
+  <!-- ---------- top console ---------- -->
+  <div class="notch console">
+    <div class="console-row">
+      <div>
+        <label class="mono">MAP</label>
+        <select id="mapSel"><option>loading…</option></select>
+      </div>
+      <div>
+        <label class="mono">SIDE</label>
+        <select id="sideSel">
+          <option value="atk">ATTACK</option>
+          <option value="def">DEFENCE</option>
+        </select>
+      </div>
+      <div>
+        <label class="mono">STRATEGY NAME</label>
+        <input id="stratName" type="text" placeholder="A exec — double smoke">
+      </div>
+      <button class="act primary" id="saveBtn">SAVE</button>
+      <button class="act" id="newBtn">NEW</button>
+      <button class="act" id="pngBtn">PNG</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <!-- ---------- stage ---------- -->
+  <div class="stage">
+
+    <!-- tools -->
+    <div class="notch panel">
+      <h3>Tools</h3>
+      <div class="toolgrid" id="toolGrid">
+        <div class="tool on" data-tool="select">Select</div>
+        <div class="tool" data-tool="pen">Pen</div>
+        <div class="tool" data-tool="arrow">Arrow</div>
+        <div class="tool" data-tool="line">Line</div>
+        <div class="tool" data-tool="text">Text</div>
+        <div class="tool" data-tool="marker">Dot</div>
+      </div>
+
+      <h3>Colour</h3>
+      <div class="swatches" id="swatches"></div>
+
+      <h3>View</h3>
+      <div class="stack">
+        <button class="act" id="calloutBtn">CALLOUTS: OFF</button>
+        <button class="act" id="aoeBtn">AREAS: ON</button>
+      </div>
+
+      <h3>Edit</h3>
+      <div class="stack">
+        <button class="act" id="undoBtn">UNDO</button>
+        <button class="act" id="redoBtn">REDO</button>
+        <button class="act" id="clearBtn">CLEAR</button>
+      </div>
+    </div>
+
+    <!-- board -->
+    <div class="notch board">
+      <div class="boardwrap">
+        <svg class="map" id="board" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5"
+                    markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/>
+            </marker>
+          </defs>
+          <image id="mapImg" x="0" y="0" width="1000" height="1000" crossorigin="anonymous"/>
+          <g id="calloutLayer"></g>
+          <g id="objLayer"></g>
+          <g id="selLayer"></g>
+        </svg>
+        <div class="maphint" id="mapHint">select a map</div>
+      </div>
+      <div class="hintbar">
+        <b>Drag</b> an agent or ability straight from the right-hand panel onto the map — or click one
+        to arm it, then click the map. <b>Select</b> tool: drag to move, <b>Delete</b> removes.<br>
+        Areas are drawn at true in-game scale. Radial abilities are <b>fixed</b> and cannot be resized.
+        Lines and walls are aimed by dragging the handle; length only changes for abilities the game
+        actually lets you vary (Fault Line's charge, Viper's wall), and never beyond their real maximum.
+      </div>
+    </div>
+
+    <!-- roster -->
+    <div class="notch panel roster">
+      <h3>Roster</h3>
+      <div class="agentgrid" id="agentGrid"></div>
+      <div class="kit">
+        <div class="kit-head" id="kitHead"></div>
+        <div class="abilrow" id="abilRow"></div>
+        <div class="kit-empty" id="kitEmpty">Pick an agent to see their kit. Drag an agent or
+          ability straight onto the map, or click to arm it.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ---------- saved strategies ---------- -->
+  <div class="notch panel savedbar">
+    <h3>Saved strategies</h3>
+    <div class="saved" id="savedList"></div>
+  </div>
+
+  <div class="foot mono">
+    MAP + AGENT DATA VIA VALORANT-API.COM · STRATEGIES STORED LOCALLY IN THIS BROWSER<br>
+    <span id="dataVer"></span>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// Team-deathmatch arenas ship in the same endpoint as the 5v5 maps but are not
+// useful here, and there is no flag in the API that separates them — so they are
+// excluded by name.
+const TDM_MAPS = new Set(['District','Kasbah','Drift','Glitch','Piazza','Summit','Basic Training','The Range']);
+
+const COLORS = ['#4DE8D8','#FF3B4E','#FFB020','#8FD14F','#B388FF','#E8ECEF'];
+const STORE_KEY = 'debrief.planner.strategies';
+const VIEW = 1000;               // svg user units; all object coords live in 0..VIEW
+
+/* -------------------------------------------------------------- ability AoE
+ * Areas of effect in REAL METRES, loaded from data/valorant_abilities.json.
+ *
+ * They render at true scale: Valorant runs on Unreal (100 units = 1 m) and
+ * valorant-api gives each map's world->minimap transform, so one smoke covers a
+ * correctly different fraction of Bind than it does of Ascent.
+ *
+ * The dataset flags most values `approximate` and states they must be
+ * re-verified after patches, so nothing here is treated as gospel — every
+ * placed area is drag-resizable with a live metre readout, which is the
+ * practical answer to a number going stale.
+ */
+let ABILITY_DB = {};          // "agent::ability" -> record from the dataset
+let ABILITY_META = null;
+
+// Shapes the board can draw. Everything else the dataset carries (self, target,
+// point, projectile, custom, map_wide) has no footprint worth putting on a
+// minimap, and is deliberately given no area rather than a misleading one.
+const DRAWABLE = new Set(['circle','line','wall','cone','mesh','curve']);
+
+// Dimensions the dataset does not carry: `line` entries give a width but no
+// length, `wall` entries a length but no width. Both are drag-adjustable, so
+// these only need to be sane starting points.
+const DEFAULT_LINE_LENGTH_M = 25;
+const DEFAULT_WALL_WIDTH_M  = 1.0;
+const DEFAULT_CONE_RANGE_M  = 18;
+const DEFAULT_CONE_DEGREES  = 60;
+
+// Tints by role, so a plan reads at a glance: grey blocks vision, red hurts,
+// cyan reveals, amber controls movement.
+const AOE_TINT = {
+  smoke:   '#9AA7B4',
+  damage:  '#FF3B4E',
+  scan:    '#4DE8D8',
+  control: '#FFB020',
+};
+
+const normKey = s => String(s).toLowerCase().replace(/\s+/g,' ').trim();
+
+function kindFromTags(tags){
+  const t = new Set(tags || []);
+  if (t.has('smoke') || t.has('vision_block')) return 'smoke';
+  if (t.has('damage') || t.has('fire')) return 'damage';
+  if (t.has('reveal') || t.has('detection') || t.has('suppress') || t.has('suppression')) return 'scan';
+  return 'control';
+}
+
+async function loadAbilityData(){
+  const res = await fetch('data/valorant_abilities.json');
+  if (!res.ok) throw new Error('ability dataset missing (data/valorant_abilities.json)');
+  const json = await res.json();
+  ABILITY_META = json.metadata || null;
+  for (const ag of json.agents || [])
+    for (const ab of ag.abilities || [])
+      ABILITY_DB[`${normKey(ag.name)}::${normKey(ab.name)}`] = ab;
+}
+
+/* valorant-api and the dataset do not always agree on naming: the API calls
+ * Astra's smoke "Nebula  / Dissipate" (two spaces) where the dataset says
+ * "Nebula", and her ult "Astral Form / Cosmic Divide" vs "Cosmic Divide". So
+ * after an exact match, retry each slash-separated part. */
+function abilityRecord(agentName, abilityName){
+  const a = normKey(agentName);
+  const exact = ABILITY_DB[`${a}::${normKey(abilityName)}`];
+  if (exact) return exact;
+  for (const part of String(abilityName).split('/')){
+    const hit = ABILITY_DB[`${a}::${normKey(part)}`];
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function aoeFor(agentName, abilityName){
+  const rec = abilityRecord(agentName, abilityName);
+  if (!rec) return null;
+  // Note: a non-drawable shape is NOT an early exit — it may still have a
+  // documented reach worth drawing. That case is handled below.
+
+  const common = {
+    kind: kindFromTags(rec.tags),
+    approximate: rec.approximate !== false,
+    duration: rec.duration_s || null,
+    // How far the ability can be thrown/deployed/reached — drawn as a dashed
+    // ring, visually distinct from the solid area it actually affects.
+    castRange: rec.cast_range_m || null,
+  };
+
+  // No footprint of its own, but a documented reach is still worth showing:
+  // "how far can this go" is a real planning question (Phoenix's ult, Veto's
+  // teleport) even when the ability affects no ground area.
+  if (!DRAWABLE.has(rec.shape)){
+    return common.castRange ? { shape:'range', locked:true, ...common } : null;
+  }
+
+  // A circle's radius is a game constant — a smoke is the size a smoke is. Making
+  // it draggable would let a plan quietly claim coverage the ability lacks, so
+  // circles are locked outright.
+  if (rec.shape === 'circle'){
+    if (!rec.radius_m) return null;
+    return { shape:'circle', r: rec.radius_m,
+             inner: rec.inner_radius_m || null, locked:true, ...common };
+  }
+  // Cones and meshes are aimed but never resized: you choose which way the
+  // turret faces, not how far it sees.
+  if (rec.shape === 'cone'){
+    return { shape:'cone', len: rec.length_m || DEFAULT_CONE_RANGE_M,
+             deg: rec.cone_degrees || DEFAULT_CONE_DEGREES,
+             angle: 0, lenFixed: true, ...common };
+  }
+  if (rec.shape === 'mesh'){
+    return { shape:'mesh', arm: rec.arm_length_m || rec.length_m || 10,
+             arms: rec.arms || 4, angle: 0, lenFixed: true, ...common };
+  }
+  // Curved flight paths. Riot documents no curve geometry, so rather than
+  // inventing an arc the planner gives two handles and lets you draw the path
+  // you actually intend to throw.
+  if (rec.shape === 'curve'){
+    return { shape:'curve', len: rec.length_m || 20, wid: rec.width_m || 2,
+             angle: 0, bend: 6, ...common };
+  }
+
+  // line | wall. Aiming is always the player's call, but length is not:
+  //   min_length_m present -> genuinely variable (charged like Fault Line, or
+  //                           drawn like Viper's wall), adjustable within range.
+  //   min_length_m absent  -> the ability always travels its full length
+  //                           (Nightfall is 40 m every time), so direction only.
+  // No documented length at all means we would be inventing a footprint, so the
+  // ability draws no area rather than an arbitrary one the user can stretch.
+  const maxLen = rec.length_m;
+  if (!maxLen) return null;
+  const minLen = rec.min_length_m || null;
+  return {
+    shape: 'strip',
+    len: maxLen,
+    wid: rec.width_m || DEFAULT_WALL_WIDTH_M,
+    maxLen,
+    minLen,
+    lenFixed: !minLen,
+    angle: 0,
+    ...common
+  };
+}
+
+/* Saved strategies predate the `locked` flag, so derive it from the shape rather
+ * than trusting the stored value to exist. */
+function aoeLocked(aoe){
+  if (!aoe) return false;
+  if (typeof aoe.locked === 'boolean') return aoe.locked;
+  // Circles and bare range rings have nothing to aim. Everything else does.
+  return aoe.shape === 'circle' || aoe.shape === 'range';
+}
+
+/* Geometry helpers shared by the SVG renderer, the PNG exporter and hit-testing,
+ * so the three can never disagree about where a shape actually is. */
+function meshArms(o){
+  const n = o.aoe.arms || 4, L = metresToView(o.aoe.arm);
+  const base = (o.aoe.angle || 0) * Math.PI/180;
+  const out = [];
+  for (let i = 0; i < n; i++){
+    const a = base + i * (2*Math.PI / n);
+    out.push([o.pos[0] + L*Math.cos(a), o.pos[1] + L*Math.sin(a)]);
+  }
+  return out;
+}
+
+function curvePoints(o){
+  const a = (o.aoe.angle || 0) * Math.PI/180;
+  const L = metresToView(o.aoe.len);
+  const end = [o.pos[0] + L*Math.cos(a), o.pos[1] + L*Math.sin(a)];
+  // Control point sits at the midpoint, pushed perpendicular by `bend`.
+  const mid = [(o.pos[0]+end[0])/2, (o.pos[1]+end[1])/2];
+  const B = metresToView(o.aoe.bend || 0);
+  const ctrl = [mid[0] + B*Math.cos(a + Math.PI/2), mid[1] + B*Math.sin(a + Math.PI/2)];
+  return { end, ctrl, mid };
+}
+
+// One place that turns an area into words, used by both the arm-status line and
+// the on-board readout so they can never disagree.
+function describeAoe(aoe){
+  if (!aoe) return 'no mapped area';
+  const dur = aoe.duration ? ` · ${aoe.duration}s` : '';
+  // A tilde marks an unverified value. Anything sourced from the official wiki
+  // drops it, so the two are visually distinguishable at a glance.
+  const tilde = aoe.approximate ? '~' : '';
+  const n = v => (Math.round(v * 10) / 10);
+  // Reach is a different fact from coverage, so it is always named separately.
+  const reach = aoe.castRange ? ` · reach ${n(aoe.castRange)} m` : '';
+
+  if (aoe.shape === 'range')  return `${tilde}reach ${n(aoe.castRange)} m${dur}`;
+  if (aoe.shape === 'circle'){
+    const core = aoe.inner ? ` (${n(aoe.inner)} m core)` : '';
+    return `${tilde}${n(aoe.r)} m radius${core}${dur}${reach}`;
+  }
+  if (aoe.shape === 'cone')   return `${tilde}${n(aoe.len)} m · ${aoe.deg}° cone${dur}${reach}`;
+  if (aoe.shape === 'mesh')   return `${tilde}${aoe.arms}× ${n(aoe.arm)} m walls${dur}${reach}`;
+  if (aoe.shape === 'curve')  return `${tilde}${n(aoe.len)} m path · bend ${n(aoe.bend)} m${dur}${reach}`;
+  // For a variable-length wall show where it sits in its range, but only once
+  // it is actually short of the maximum — "56 of 56" is noise.
+  const range = (!aoe.lenFixed && aoe.maxLen && aoe.len < aoe.maxLen - 0.05)
+    ? ` of ${n(aoe.maxLen)}` : '';
+  return `${tilde}${n(aoe.len)}${range}×${n(aoe.wid)} m${dur}${reach}`;
+}
+
+// A cone drawn as an SVG path: apex at the origin, opening `deg` degrees wide
+// along `angle`.
+function conePath(cx, cy, lenView, deg, angleDeg){
+  const half = (deg/2) * Math.PI/180;
+  const a = angleDeg * Math.PI/180;
+  const p1 = [cx + lenView*Math.cos(a-half), cy + lenView*Math.sin(a-half)];
+  const p2 = [cx + lenView*Math.cos(a+half), cy + lenView*Math.sin(a+half)];
+  return `M ${cx} ${cy} L ${p1[0]} ${p1[1]} A ${lenView} ${lenView} 0 0 1 ${p2[0]} ${p2[1]} Z`;
+}
+
+/* Metres -> view units, using the current map's own transform.
+ * xMultiplier maps world units to 0..1 across the minimap, and 1 m = 100 world
+ * units, so this is exact per map rather than one fudged constant for all. */
+function metresToView(m){
+  if (!state.map) return 0;
+  return m * 100 * Math.abs(state.map.xMultiplier) * VIEW;
+}
+
+function viewToMetres(v){
+  if (!state.map) return 0;
+  const d = 100 * Math.abs(state.map.xMultiplier) * VIEW;
+  return d ? v / d : 0;
+}
+
+const state = {
+  maps: [],
+  agents: [],
+  map: null,
+  agent: null,                 // agent whose ability palette is shown
+  ability: null,               // {icon, name, agent} when placing utility
+  // What the next map click will place. Kept separate from `agent` because the
+  // palette must stay open after placing (you often drop two smokes in a row),
+  // but a still-selected agent must NOT mean every later click drops a marker.
+  armed: null,                 // null | 'agent' | 'ability'
+  tool: 'select',
+  color: COLORS[0],
+  showCallouts: false,
+  showAoe: true,
+  objects: [],
+  selectedId: null,
+  history: [],
+  future: [],
+  currentId: null,             // id of the loaded saved strategy, if any
+};
+
+let uid = 0;
+const nextId = () => `o${++uid}`;
+
+/* ------------------------------------------------------------------ utils */
+
+const $ = id => document.getElementById(id);
+
+function setStatus(msg, isErr){
+  const el = $('status');
+  el.textContent = msg || '';
+  el.className = 'status' + (isErr ? ' err' : '');
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+
+/* ---------------------------------------------------------------- history */
+
+// Snapshot-based undo. The scene is small (tens of objects), so cloning the whole
+// object list per edit is cheaper to reason about than a command log, and it
+// cannot drift out of sync with the rendered state.
+function pushHistory(){
+  state.history.push(JSON.stringify(state.objects));
+  if (state.history.length > 60) state.history.shift();
+  state.future.length = 0;
+  refreshUndoButtons();
+}
+
+function undo(){
+  if (!state.history.length) return;
+  state.future.push(JSON.stringify(state.objects));
+  state.objects = JSON.parse(state.history.pop());
+  state.selectedId = null;
+  render(); refreshUndoButtons();
+}
+
+function redo(){
+  if (!state.future.length) return;
+  state.history.push(JSON.stringify(state.objects));
+  state.objects = JSON.parse(state.future.pop());
+  state.selectedId = null;
+  render(); refreshUndoButtons();
+}
+
+function refreshUndoButtons(){
+  $('undoBtn').disabled = !state.history.length;
+  $('redoBtn').disabled = !state.future.length;
+}
+
+/* ------------------------------------------------------------ data loading */
+
+async function loadStaticData(){
+  setStatus('loading maps and agents…');
+  const [mRes, aRes] = await Promise.all([
+    fetch('https://valorant-api.com/v1/maps'),
+    fetch('https://valorant-api.com/v1/agents?isPlayableCharacter=true')
+  ]);
+  if (!mRes.ok || !aRes.ok) throw new Error('valorant-api.com request failed');
+
+  const mJson = await mRes.json();
+  const aJson = await aRes.json();
+
+  state.maps = mJson.data
+    .filter(m => m.displayIcon && !TDM_MAPS.has(m.displayName))
+    .sort((a,b) => a.displayName.localeCompare(b.displayName));
+
+  state.agents = aJson.data
+    .filter(a => a.displayIcon)
+    .sort((a,b) => a.displayName.localeCompare(b.displayName));
+
+  setStatus('');
+}
+
+/* ------------------------------------------------- callout projection maths */
+
+// valorant-api gives callout positions in world coordinates plus the transform
+// onto the minimap. Note the axis swap: minimap-x comes from world *y*.
+function calloutToView(c, map){
+  const nx = c.location.y * map.xMultiplier + map.xScalarToAdd;
+  const ny = c.location.x * map.yMultiplier + map.yScalarToAdd;
+  return { x: nx * VIEW, y: ny * VIEW };
+}
+
+/* ---------------------------------------------------------------- rendering */
+
+function render(){
+  renderCallouts();
+  renderObjects();
+  renderSelection();
+}
+
+function renderCallouts(){
+  const layer = $('calloutLayer');
+  layer.innerHTML = '';
+  if (!state.showCallouts || !state.map || !state.map.callouts) return;
+
+  for (const c of state.map.callouts){
+    const p = calloutToView(c, state.map);
+    if (!isFinite(p.x) || !isFinite(p.y)) continue;
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x', p.x);
+    t.setAttribute('y', p.y);
+    t.setAttribute('text-anchor','middle');
+    t.setAttribute('class','callout-txt');
+    // superRegionName is "A"/"B"/"C"/"Mid"; the pair reads the way players talk.
+    const sr = c.superRegionName ? c.superRegionName + ' ' : '';
+    t.textContent = sr + c.regionName;
+    layer.appendChild(t);
+  }
+}
+
+function svgEl(name, attrs){
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+function renderObjects(){
+  const layer = $('objLayer');
+  layer.innerHTML = '';
+
+  for (const o of state.objects){
+    let el = null;
+
+    if (o.type === 'pen'){
+      el = svgEl('polyline', {
+        points: o.points.map(p => p[0] + ',' + p[1]).join(' '),
+        fill:'none', stroke:o.color, 'stroke-width':o.width || 4,
+        'stroke-linecap':'round', 'stroke-linejoin':'round'
+      });
+    }
+    else if (o.type === 'line' || o.type === 'arrow'){
+      el = svgEl('line', {
+        x1:o.a[0], y1:o.a[1], x2:o.b[0], y2:o.b[1],
+        stroke:o.color, 'stroke-width':o.width || 4, 'stroke-linecap':'round'
+      });
+      if (o.type === 'arrow') el.setAttribute('marker-end','url(#ah)');
+    }
+    else if (o.type === 'text'){
+      el = svgEl('text', {
+        x:o.pos[0], y:o.pos[1], fill:o.color,
+        'font-family':"'JetBrains Mono',monospace", 'font-size': o.size || 22,
+        'paint-order':'stroke', stroke:'#05080B', 'stroke-width':4, 'stroke-linejoin':'round'
+      });
+      el.textContent = o.text;
+    }
+    else if (o.type === 'marker'){
+      el = svgEl('circle', { cx:o.pos[0], cy:o.pos[1], r:o.r || 11, fill:o.color,
+                             stroke:'#05080B', 'stroke-width':2 });
+    }
+    else if (o.type === 'agent' || o.type === 'util'){
+      const size = o.type === 'agent' ? 44 : 34;
+      const g = svgEl('g', {});
+
+      // Area of effect first, so the icon sits on top of it.
+      if (o.aoe && state.showAoe){
+        const tint = AOE_TINT[o.aoe.kind] || o.color;
+        const A = o.aoe;
+        const fill = { fill:tint, 'fill-opacity':0.16, stroke:tint,
+                       'stroke-opacity':0.65, 'stroke-width':2 };
+
+        // How far it reaches, drawn dashed and unfilled so it never reads as
+        // coverage. This is "where can I put it", not "what does it hit".
+        if (A.castRange){
+          g.appendChild(svgEl('circle', {
+            cx:o.pos[0], cy:o.pos[1], r:metresToView(A.castRange),
+            fill:'none', stroke:tint, 'stroke-opacity':0.32,
+            'stroke-width':1.5, 'stroke-dasharray':'7 6'
+          }));
+        }
+
+        if (A.shape === 'circle'){
+          g.appendChild(svgEl('circle', { cx:o.pos[0], cy:o.pos[1], r:metresToView(A.r), ...fill }));
+          // Some blasts have a lethal core inside a weaker outer radius.
+          if (A.inner){
+            g.appendChild(svgEl('circle', {
+              cx:o.pos[0], cy:o.pos[1], r:metresToView(A.inner),
+              fill:tint, 'fill-opacity':0.22, stroke:tint,
+              'stroke-opacity':0.5, 'stroke-width':1, 'stroke-dasharray':'3 3'
+            }));
+          }
+        }
+        else if (A.shape === 'strip'){
+          const L = metresToView(A.len), W = metresToView(A.wid);
+          g.appendChild(svgEl('rect', {
+            x:o.pos[0], y:o.pos[1]-W/2, width:L, height:W, ...fill,
+            transform:`rotate(${A.angle||0} ${o.pos[0]} ${o.pos[1]})`
+          }));
+        }
+        else if (A.shape === 'cone'){
+          g.appendChild(svgEl('path', {
+            d: conePath(o.pos[0], o.pos[1], metresToView(A.len), A.deg, A.angle||0), ...fill
+          }));
+        }
+        else if (A.shape === 'mesh'){
+          // Walls radiating from a central orb — an X when there are four.
+          for (const end of meshArms(o)){
+            g.appendChild(svgEl('line', {
+              x1:o.pos[0], y1:o.pos[1], x2:end[0], y2:end[1],
+              stroke:tint, 'stroke-opacity':0.8,
+              'stroke-width':Math.max(3, metresToView(0.6)), 'stroke-linecap':'round'
+            }));
+          }
+        }
+        else if (A.shape === 'curve'){
+          const { end, ctrl } = curvePoints(o);
+          g.appendChild(svgEl('path', {
+            d:`M ${o.pos[0]} ${o.pos[1]} Q ${ctrl[0]} ${ctrl[1]} ${end[0]} ${end[1]}`,
+            fill:'none', stroke:tint, 'stroke-opacity':0.45,
+            'stroke-width':Math.max(4, metresToView(A.wid)), 'stroke-linecap':'round'
+          }));
+        }
+        // 'range' draws only the dashed ring above — it has no footprint.
+      }
+
+      g.appendChild(svgEl('circle', {
+        cx:o.pos[0], cy:o.pos[1], r:size/2 + 3,
+        fill:'rgba(5,8,11,0.75)', stroke:o.color, 'stroke-width':2
+      }));
+      const img = svgEl('image', {
+        x:o.pos[0]-size/2, y:o.pos[1]-size/2, width:size, height:size,
+        href:o.icon, crossorigin:'anonymous'
+      });
+      img.setAttributeNS('http://www.w3.org/1999/xlink','href', o.icon);
+      g.appendChild(img);
+      el = g;
+    }
+
+    if (!el) continue;
+    el.dataset.id = o.id;
+    el.style.cursor = state.tool === 'select' ? 'move' : 'crosshair';
+    layer.appendChild(el);
+  }
+}
+
+function renderSelection(){
+  const layer = $('selLayer');
+  layer.innerHTML = '';
+  if (!state.selectedId) return;
+  const o = state.objects.find(x => x.id === state.selectedId);
+  if (!o) return;
+  const b = objBounds(o);
+  if (!b) return;
+  layer.appendChild(svgEl('rect', {
+    x:b.x-6, y:b.y-6, width:b.w+12, height:b.h+12, class:'obj-sel', rx:3
+  }));
+
+  if (!o.aoe || !state.showAoe) return;
+  const h = aoeHandlePos(o);
+  const tint = AOE_TINT[o.aoe.kind] || o.color;
+  const locked = aoeLocked(o.aoe);
+
+  // Only aimable areas get a handle. Fixed ones still show their size — you want
+  // to read a smoke's radius, you just must not be able to invent a bigger one.
+  if (!locked){
+    layer.appendChild(svgEl('line', {
+      x1:o.pos[0], y1:o.pos[1], x2:h.x, y2:h.y,
+      stroke:tint, 'stroke-opacity':0.5, 'stroke-width':1.5, 'stroke-dasharray':'4 3'
+    }));
+    const dot = svgEl('circle', { cx:h.x, cy:h.y, r:9, fill:tint, stroke:'#05080B', 'stroke-width':2 });
+    dot.dataset.handle = 'end';
+    dot.style.cursor = 'grab';
+    layer.appendChild(dot);
+
+    // Curves get a second, hollow handle that pulls the arc sideways.
+    if (o.aoe.shape === 'curve'){
+      const b = aoeBendHandlePos(o);
+      layer.appendChild(svgEl('line', {
+        x1:b.x, y1:b.y, x2:(o.pos[0]+h.x)/2, y2:(o.pos[1]+h.y)/2,
+        stroke:tint, 'stroke-opacity':0.3, 'stroke-width':1, 'stroke-dasharray':'2 4'
+      }));
+      const bd = svgEl('circle', { cx:b.x, cy:b.y, r:8, fill:'#05080B',
+                                   stroke:tint, 'stroke-width':2.5 });
+      bd.dataset.handle = 'bend';
+      bd.style.cursor = 'grab';
+      layer.appendChild(bd);
+    }
+  }
+
+  const label = describeAoe(o.aoe) + (locked ? ' · fixed' : '');
+  const t = svgEl('text', {
+    x:h.x + 14, y:h.y + 5, fill:tint,
+    'font-family':"'JetBrains Mono',monospace", 'font-size':18,
+    'paint-order':'stroke', stroke:'#05080B', 'stroke-width':4, 'stroke-linejoin':'round'
+  });
+  t.textContent = label;
+  layer.appendChild(t);
+}
+
+function aoeHandlePos(o){
+  const A = o.aoe;
+  if (A.shape === 'circle') return { x: o.pos[0] + metresToView(A.r), y: o.pos[1] };
+  if (A.shape === 'range')  return { x: o.pos[0] + metresToView(A.castRange), y: o.pos[1] };
+  if (A.shape === 'mesh'){
+    const first = meshArms(o)[0];
+    return { x: first[0], y: first[1] };
+  }
+  if (A.shape === 'curve'){
+    const { end } = curvePoints(o);
+    return { x: end[0], y: end[1] };
+  }
+  const a = (A.angle || 0) * Math.PI / 180;
+  const L = metresToView(A.len);
+  return { x: o.pos[0] + L*Math.cos(a), y: o.pos[1] + L*Math.sin(a) };
+}
+
+// Second handle, curves only: drags the bend perpendicular to the throw line.
+function aoeBendHandlePos(o){
+  const { ctrl } = curvePoints(o);
+  return { x: ctrl[0], y: ctrl[1] };
+}
+
+function objBounds(o){
+  if (o.type === 'pen'){
+    const xs = o.points.map(p=>p[0]), ys = o.points.map(p=>p[1]);
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return { x, y, w: Math.max(...xs)-x, h: Math.max(...ys)-y };
+  }
+  if (o.type === 'line' || o.type === 'arrow'){
+    const x = Math.min(o.a[0],o.b[0]), y = Math.min(o.a[1],o.b[1]);
+    return { x, y, w: Math.abs(o.b[0]-o.a[0]), h: Math.abs(o.b[1]-o.a[1]) };
+  }
+  if (o.type === 'text'){
+    const w = (o.text.length * (o.size||22) * 0.6);
+    return { x:o.pos[0], y:o.pos[1]-(o.size||22), w, h:(o.size||22)*1.2 };
+  }
+  const r = o.type === 'agent' ? 25 : (o.type === 'util' ? 20 : (o.r||11));
+  return { x:o.pos[0]-r, y:o.pos[1]-r, w:r*2, h:r*2 };
+}
+
+/* ------------------------------------------------------------- interactions */
+
+// Screen coords -> board coords. Split out from the event so the palette
+// drag-and-drop can reuse it on drop, where there is no board event to read.
+function clientToView(cx, cy){
+  const svg = $('board');
+  const r = svg.getBoundingClientRect();
+  // preserveAspectRatio=meet letterboxes the viewBox; compute the drawn square
+  // so clicks map to the right place when the panel is not perfectly square.
+  const side = Math.min(r.width, r.height);
+  const offX = r.left + (r.width - side)/2;
+  const offY = r.top + (r.height - side)/2;
+  return { x: (cx - offX) / side * VIEW, y: (cy - offY) / side * VIEW };
+}
+
+function pointerToView(evt){ return clientToView(evt.clientX, evt.clientY); }
+
+// True when a screen point is inside the drawn board square.
+function overBoard(cx, cy){
+  const r = $('board').getBoundingClientRect();
+  const side = Math.min(r.width, r.height);
+  const offX = r.left + (r.width - side)/2;
+  const offY = r.top + (r.height - side)/2;
+  return cx >= offX && cx <= offX + side && cy >= offY && cy <= offY + side;
+}
+
+/* ---- placement, shared by click-to-arm and drag-and-drop ---- */
+
+function placeAbilityAt(agentName, ability, vx, vy){
+  const o = { id:nextId(), type:'util', pos:[vx,vy],
+              icon:ability.icon, name:ability.name, color:state.color };
+  const aoe = aoeFor(agentName, ability.name);
+  if (aoe) o.aoe = aoe;
+  state.objects.push(o);
+  state.selectedId = o.id;
+  return o;
+}
+
+function placeAgentAt(agent, vx, vy){
+  const o = { id:nextId(), type:'agent', pos:[vx,vy],
+              icon:agent.displayIcon, name:agent.displayName, color:state.color };
+  state.objects.push(o);
+  state.selectedId = o.id;
+  return o;
+}
+
+function announcePlaced(o){
+  setStatus(!o.aoe ? ''
+    : aoeLocked(o.aoe) ? `${describeAoe(o.aoe)} · fixed size · Delete to remove`
+    : `${describeAoe(o.aoe)} · drag the handle to aim · Delete to remove`);
+}
+
+/* ---- dragging straight out of the palette onto the board -------------------
+ * Pointer events rather than HTML5 drag-and-drop: HTML5 DnD does not fire on
+ * touch, and we want the same gesture to work on a tablet. A short press with
+ * no movement still falls through to the click handler, so click-to-arm keeps
+ * working for anyone who prefers it. */
+let paletteDrag = null;
+let suppressClick = false;      // set when a press turned into a drag
+
+function startPaletteDrag(evt, kind, payload, iconUrl){
+  if (evt.button != null && evt.button !== 0) return;   // left button / touch only
+
+  // Deliberately NOT calling evt.preventDefault() here: on pointerdown that can
+  // suppress the compatibility click event in some browsers, which would kill
+  // click-to-arm. The native image drag is instead blocked by draggable=false,
+  // -webkit-user-drag:none, and the dragstart handler below.
+
+  // Route every later move/up to this element even if the cursor leaves it, so
+  // the gesture cannot be lost mid-drag.
+  try { evt.currentTarget.setPointerCapture(evt.pointerId); } catch { /* synthetic event */ }
+
+  paletteDrag = { kind, payload, iconUrl, startX:evt.clientX, startY:evt.clientY,
+                  moved:false, ghost:null };
+}
+
+function endPaletteDrag(){
+  if (paletteDrag && paletteDrag.ghost) paletteDrag.ghost.remove();
+  paletteDrag = null;
+}
+
+// Belt and braces: if a native drag or anything else interrupts the gesture,
+// drop the state rather than leaving a ghost stuck to the cursor.
+document.addEventListener('dragstart', e => {
+  if (paletteDrag) e.preventDefault();
+});
+document.addEventListener('pointercancel', endPaletteDrag);
+window.addEventListener('blur', endPaletteDrag);
+
+document.addEventListener('pointermove', e => {
+  if (!paletteDrag) return;
+  const dx = e.clientX - paletteDrag.startX, dy = e.clientY - paletteDrag.startY;
+  // Below the threshold this is still a click, not a drag.
+  if (!paletteDrag.moved && Math.hypot(dx, dy) < 6) return;
+
+  if (!paletteDrag.moved){
+    paletteDrag.moved = true;
+    const g = document.createElement('div');
+    g.className = 'drag-ghost';
+    const img = document.createElement('img');
+    img.src = paletteDrag.iconUrl;
+    g.appendChild(img);
+    document.body.appendChild(g);
+    paletteDrag.ghost = g;
+  }
+  paletteDrag.ghost.style.left = e.clientX + 'px';
+  paletteDrag.ghost.style.top  = e.clientY + 'px';
+  paletteDrag.ghost.classList.toggle('over', overBoard(e.clientX, e.clientY));
+});
+
+document.addEventListener('pointerup', e => {
+  if (!paletteDrag) return;
+  const d = paletteDrag;
+  paletteDrag = null;
+  if (d.ghost) d.ghost.remove();
+  if (!d.moved) return;                    // plain click: let onclick arm it
+
+  suppressClick = true;                    // ...but a drag must not also arm
+  if (!state.map || !overBoard(e.clientX, e.clientY)){
+    setStatus('');
+    return;                                // dropped outside the board: cancel
+  }
+
+  const p = clientToView(e.clientX, e.clientY);
+  pushHistory();
+  const o = d.kind === 'agent'
+    ? placeAgentAt(d.payload, p.x, p.y)
+    : placeAbilityAt(d.payload.agent, d.payload, p.x, p.y);
+
+  // A drop is a complete action; leave nothing armed behind it.
+  state.armed = null; state.ability = null;
+  renderAgents(); renderAbilities(); render();
+  o.type === 'util' ? announcePlaced(o) : setStatus('');
+});
+
+let drag = null;
+
+function onPointerDown(evt){
+  if (!state.map) return;
+  const p = pointerToView(evt);
+  $('board').setPointerCapture(evt.pointerId);
+
+  // Grabbing an AoE handle always wins — otherwise arming an ability and then
+  // reaching for the handle would drop a second copy instead of resizing. A
+  // handle is only ever drawn for aimable areas, so the lock check here is
+  // belt-and-braces against a stale saved object.
+  if (evt.target && evt.target.dataset && evt.target.dataset.handle && state.selectedId){
+    const sel = state.objects.find(x => x.id === state.selectedId);
+    if (sel && !aoeLocked(sel.aoe)){
+      pushHistory();
+      // 'end' aims (and sizes, where allowed); 'bend' curves the path.
+      drag = { mode: evt.target.dataset.handle === 'bend' ? 'bend' : 'aoe',
+               id: state.selectedId };
+    }
+    return;
+  }
+
+  // Placing an agent or ability takes priority over the active drawing tool:
+  // the palette selection is the more recent, more specific intent.
+  if (state.armed === 'ability' && state.ability){
+    pushHistory();
+    const o = placeAbilityAt(state.ability.agent, state.ability, p.x, p.y);
+    // Disarm but keep the agent selected, so the palette stays open for a second
+    // piece of utility without arming a stray agent marker.
+    state.armed = null; state.ability = null;
+    renderAbilities(); render();
+    announcePlaced(o);
+    return;
+  }
+  if (state.armed === 'agent' && state.agent){
+    pushHistory();
+    placeAgentAt(state.agent, p.x, p.y);
+    state.armed = null;
+    renderAgents(); renderAbilities(); render();
+    setStatus('');
+    return;
+  }
+
+  const t = state.tool;
+
+  if (t === 'select'){
+    // Handle grabs are already dealt with at the top of this function.
+    const id = evt.target && evt.target.closest ? closestObjId(evt.target) : null;
+    state.selectedId = id;
+    if (id){
+      drag = { mode:'move', id, last:p, moved:false };
+    }
+    renderSelection();
+    return;
+  }
+
+  if (t === 'pen'){
+    pushHistory();
+    const o = { id:nextId(), type:'pen', points:[[p.x,p.y]], color:state.color, width:4 };
+    state.objects.push(o);
+    drag = { mode:'pen', id:o.id };
+    render();
+    return;
+  }
+
+  if (t === 'line' || t === 'arrow'){
+    pushHistory();
+    const o = { id:nextId(), type:t, a:[p.x,p.y], b:[p.x,p.y], color:state.color, width:4 };
+    state.objects.push(o);
+    drag = { mode:'seg', id:o.id };
+    render();
+    return;
+  }
+
+  if (t === 'marker'){
+    pushHistory();
+    state.objects.push({ id:nextId(), type:'marker', pos:[p.x,p.y], color:state.color, r:11 });
+    render();
+    return;
+  }
+
+  if (t === 'text'){
+    const txt = prompt('Label text:');
+    if (txt && txt.trim()){
+      pushHistory();
+      state.objects.push({ id:nextId(), type:'text', pos:[p.x,p.y],
+                           text:txt.trim(), color:state.color, size:22 });
+      render();
+    }
+    return;
+  }
+}
+
+function closestObjId(node){
+  let n = node;
+  while (n && n !== $('objLayer')){
+    if (n.dataset && n.dataset.id) return n.dataset.id;
+    n = n.parentNode;
+  }
+  return null;
+}
+
+function onPointerMove(evt){
+  if (!drag) return;
+  const p = pointerToView(evt);
+  const o = state.objects.find(x => x.id === drag.id);
+  if (!o) return;
+
+  if (drag.mode === 'pen'){
+    const last = o.points[o.points.length-1];
+    // Skip sub-pixel moves; without this a slow drag produces thousands of
+    // points and the saved strategy balloons for no visual gain.
+    if (Math.hypot(p.x-last[0], p.y-last[1]) < 3) return;
+    o.points.push([p.x,p.y]);
+    renderObjects();
+  }
+  else if (drag.mode === 'seg'){
+    o.b = [p.x,p.y];
+    renderObjects();
+  }
+  else if (drag.mode === 'aoe'){
+    // Fixed areas never reach here (no handle is drawn), but guard anyway so a
+    // stale saved object cannot be resized past what the ability actually does.
+    if (aoeLocked(o.aoe)) return;
+    const dx = p.x - o.pos[0], dy = p.y - o.pos[1];
+    // Direction is always the player's choice.
+    o.aoe.angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    // Length only where the game actually lets you vary it, and then only
+    // within the real range — never longer than the ability reaches.
+    if (!o.aoe.lenFixed){
+      const metres = viewToMetres(Math.hypot(dx, dy));
+      o.aoe.len = o.aoe.maxLen
+        ? Math.min(o.aoe.maxLen, Math.max(o.aoe.minLen || 1, metres))
+        : Math.max(1, metres);     // curves have no documented maximum
+    }
+    render();
+  }
+  else if (drag.mode === 'bend'){
+    // Signed perpendicular offset of the pointer from the straight throw line.
+    const a = (o.aoe.angle || 0) * Math.PI/180;
+    const L = metresToView(o.aoe.len);
+    const mid = [o.pos[0] + L*Math.cos(a)/2, o.pos[1] + L*Math.sin(a)/2];
+    const px = Math.cos(a + Math.PI/2), py = Math.sin(a + Math.PI/2);
+    o.aoe.bend = viewToMetres((p.x - mid[0])*px + (p.y - mid[1])*py);
+    render();
+  }
+  else if (drag.mode === 'move'){
+    const dx = p.x - drag.last.x, dy = p.y - drag.last.y;
+    drag.last = p;
+    if (!drag.moved){ pushHistory(); drag.moved = true; }
+    translate(o, dx, dy);
+    render();
+  }
+}
+
+function translate(o, dx, dy){
+  if (o.points) o.points = o.points.map(pt => [pt[0]+dx, pt[1]+dy]);
+  if (o.a){ o.a = [o.a[0]+dx, o.a[1]+dy]; o.b = [o.b[0]+dx, o.b[1]+dy]; }
+  if (o.pos) o.pos = [o.pos[0]+dx, o.pos[1]+dy];
+}
+
+function onPointerUp(evt){
+  if (drag && drag.mode === 'seg'){
+    const o = state.objects.find(x => x.id === drag.id);
+    // A click with no drag leaves a zero-length segment that is invisible but
+    // still selectable — drop it.
+    if (o && Math.hypot(o.b[0]-o.a[0], o.b[1]-o.a[1]) < 6){
+      state.objects = state.objects.filter(x => x.id !== o.id);
+      state.history.pop();
+      render();
+    }
+  }
+  drag = null;
+  refreshUndoButtons();
+}
+
+/* --------------------------------------------------------------- palettes */
+
+function renderAgents(){
+  const g = $('agentGrid');
+  g.innerHTML = '';
+  for (const a of state.agents){
+    const tile = document.createElement('div');
+    tile.className = 'agent-tile' + (state.agent && state.agent.uuid === a.uuid ? ' on' : '');
+    tile.title = a.displayName;
+
+    const img = document.createElement('img');
+    img.src = a.displayIcon;
+    img.alt = a.displayName;
+    img.loading = 'lazy';
+    img.draggable = false;      // the CSS handles this too; belt and braces
+    tile.appendChild(img);
+
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = a.displayName;
+    tile.appendChild(nm);
+
+    tile.onpointerdown = e => startPaletteDrag(e, 'agent', a, a.displayIcon);
+    tile.onclick = () => {
+      if (suppressClick){ suppressClick = false; return; }   // that was a drag
+      const same = state.agent && state.agent.uuid === a.uuid;
+      if (same && state.armed === 'agent'){
+        state.armed = null;              // click the armed agent again to cancel
+      } else {
+        state.agent = a; state.armed = 'agent';
+      }
+      state.ability = null;
+      renderAgents(); renderAbilities();
+      setStatus(state.armed === 'agent' ? `click the map to place ${a.displayName}` : '');
+    };
+    g.appendChild(tile);
+  }
+}
+
+// valorant-api names the slots by internal role; players think in keybinds.
+const SLOT_KEY = { Grenade:'C', Ability1:'Q', Ability2:'E', Ultimate:'X' };
+
+function renderAbilities(){
+  const row = $('abilRow');
+  const head = $('kitHead');
+  const empty = $('kitEmpty');
+  row.innerHTML = '';
+  head.innerHTML = '';
+
+  const a = state.agent;
+  if (!a){
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Who is selected, so the kit beside the grid is never ambiguous.
+  const portrait = document.createElement('img');
+  portrait.src = a.displayIcon; portrait.alt = a.displayName; portrait.draggable = false;
+  head.appendChild(portrait);
+  const meta = document.createElement('div');
+  const who = document.createElement('div');
+  who.className = 'who'; who.textContent = a.displayName;
+  const role = document.createElement('div');
+  role.className = 'role'; role.textContent = (a.role && a.role.displayName) || '';
+  meta.appendChild(who); meta.appendChild(role);
+  head.appendChild(meta);
+
+  for (const ab of (a.abilities || [])){
+    if (!ab.displayIcon) continue;
+    // Passives cannot be placed on a map, so they are not offered.
+    if (ab.slot === 'Passive') continue;
+
+    const d = document.createElement('div');
+    d.className = 'abil' + (state.ability && state.ability.name === ab.displayName ? ' on' : '');
+    d.title = ab.displayName;
+
+    const key = document.createElement('div');
+    key.className = 'k'; key.textContent = SLOT_KEY[ab.slot] || '·';
+    d.appendChild(key);
+
+    const img = document.createElement('img');
+    img.src = ab.displayIcon;
+    img.alt = ab.displayName;
+    img.draggable = false;
+    d.appendChild(img);
+
+    const an = document.createElement('div');
+    an.className = 'an'; an.textContent = ab.displayName;
+    d.appendChild(an);
+
+    // The area it covers, right on the tile — so you can compare utility
+    // without having to place it first.
+    const aoe = aoeFor(a.displayName, ab.displayName);
+    const sz = document.createElement('div');
+    sz.className = 'sz';
+    sz.textContent = aoe ? describeAoe(aoe).split(' · ')[0] : '';
+    d.appendChild(sz);
+    d.onpointerdown = e => {
+      e.stopPropagation();
+      startPaletteDrag(e, 'ability',
+        { icon: ab.displayIcon, name: ab.displayName, agent: a.displayName },
+        ab.displayIcon);
+    };
+    d.onclick = (e) => {
+      e.stopPropagation();
+      if (suppressClick){ suppressClick = false; return; }   // that was a drag
+      const armedSame = state.armed === 'ability' && state.ability && state.ability.name === ab.displayName;
+      if (armedSame){
+        state.ability = null; state.armed = null;
+      } else {
+        state.ability = { icon: ab.displayIcon, name: ab.displayName, agent: a.displayName };
+        state.armed = 'ability';
+      }
+      renderAbilities();
+      if (state.ability){
+        setStatus(`click the map to place ${state.ability.name} — ${describeAoe(aoeFor(a.displayName, ab.displayName))}`);
+      } else setStatus('');
+    };
+    row.appendChild(d);
+  }
+}
+
+/* -------------------------------------------------------------- persistence */
+
+function loadStore(){
+  try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function writeStore(list){
+  localStorage.setItem(STORE_KEY, JSON.stringify(list));
+}
+
+function saveStrategy(){
+  if (!state.map){ setStatus('pick a map first', true); return; }
+  const name = ($('stratName').value || '').trim();
+  if (!name){ setStatus('give the strategy a name', true); return; }
+
+  const list = loadStore();
+  const rec = {
+    id: state.currentId || ('s' + Date.now()),
+    name,
+    map: state.map.displayName,
+    mapUuid: state.map.uuid,
+    side: $('sideSel').value,
+    objects: state.objects,
+    updatedAt: Date.now()
+  };
+  const i = list.findIndex(s => s.id === rec.id);
+  if (i >= 0) list[i] = rec; else list.push(rec);
+  writeStore(list);
+  state.currentId = rec.id;
+  renderSaved();
+  setStatus(`saved "${name}"`);
+}
+
+function loadStrategy(id){
+  const rec = loadStore().find(s => s.id === id);
+  if (!rec) return;
+  const map = state.maps.find(m => m.uuid === rec.mapUuid);
+  if (map){ $('mapSel').value = map.uuid; selectMap(map.uuid, true); }
+  state.objects = rec.objects || [];
+  state.currentId = rec.id;
+  state.selectedId = null;
+  state.history.length = 0; state.future.length = 0;
+  $('stratName').value = rec.name;
+  $('sideSel').value = rec.side || 'atk';
+  // Keep ids unique if the saved file was made before this session.
+  for (const o of state.objects){
+    const n = parseInt(String(o.id).replace(/\D/g,''), 10);
+    if (!isNaN(n) && n > uid) uid = n;
+  }
+  render(); refreshUndoButtons();
+  setStatus(`loaded "${rec.name}"`);
+}
+
+function deleteStrategy(id){
+  const list = loadStore().filter(s => s.id !== id);
+  writeStore(list);
+  if (state.currentId === id) state.currentId = null;
+  renderSaved();
+}
+
+function renderSaved(){
+  const box = $('savedList');
+  const list = loadStore().sort((a,b) => b.updatedAt - a.updatedAt);
+  if (!list.length){
+    box.innerHTML = '<div class="muted">nothing saved yet</div>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const s of list){
+    const row = document.createElement('div');
+    row.className = 'saveitem';
+    row.innerHTML =
+      `<span class="nm" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>` +
+      `<span class="mp">${escapeHtml((s.map||'').slice(0,8).toUpperCase())}</span>` +
+      `<span class="del" title="delete">×</span>`;
+    row.querySelector('.nm').onclick = () => loadStrategy(s.id);
+    row.querySelector('.del').onclick = () => deleteStrategy(s.id);
+    box.appendChild(row);
+  }
+}
+
+/* ------------------------------------------------------------- PNG export */
+
+// Redraw the scene onto a canvas rather than serialising the SVG: serialised
+// SVG will not resolve its external <image> hrefs when drawn to a canvas, so
+// agents and utility would silently vanish from the export.
+async function exportPng(){
+  if (!state.map){ setStatus('pick a map first', true); return; }
+  setStatus('rendering png…');
+  const S = 1400;
+  const cv = document.createElement('canvas');
+  cv.width = S; cv.height = S;
+  const ctx = cv.getContext('2d');
+  const k = S / VIEW;
+
+  ctx.fillStyle = '#05080B';
+  ctx.fillRect(0,0,S,S);
+
+  try {
+    const base = await loadImg(state.map.displayIcon);
+    ctx.drawImage(base, 0, 0, S, S);
+  } catch { /* keep going; the shapes still carry the plan */ }
+
+  if (state.showCallouts && state.map.callouts){
+    ctx.font = `${13*k}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(232,236,239,0.55)';
+    ctx.strokeStyle = '#05080B';
+    ctx.lineWidth = 3*k;
+    for (const c of state.map.callouts){
+      const p = calloutToView(c, state.map);
+      if (!isFinite(p.x)) continue;
+      const label = (c.superRegionName ? c.superRegionName + ' ' : '') + c.regionName;
+      ctx.strokeText(label, p.x*k, p.y*k);
+      ctx.fillText(label, p.x*k, p.y*k);
+    }
+  }
+
+  for (const o of state.objects){
+    ctx.strokeStyle = o.color; ctx.fillStyle = o.color;
+    ctx.lineWidth = (o.width || 4) * k;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    if (o.type === 'pen' && o.points.length > 1){
+      ctx.beginPath();
+      ctx.moveTo(o.points[0][0]*k, o.points[0][1]*k);
+      for (const p of o.points.slice(1)) ctx.lineTo(p[0]*k, p[1]*k);
+      ctx.stroke();
+    }
+    else if (o.type === 'line' || o.type === 'arrow'){
+      ctx.beginPath();
+      ctx.moveTo(o.a[0]*k, o.a[1]*k);
+      ctx.lineTo(o.b[0]*k, o.b[1]*k);
+      ctx.stroke();
+      if (o.type === 'arrow') drawArrowHead(ctx, o, k);
+    }
+    else if (o.type === 'marker'){
+      ctx.beginPath();
+      ctx.arc(o.pos[0]*k, o.pos[1]*k, (o.r||11)*k, 0, Math.PI*2);
+      ctx.fill();
+    }
+    else if (o.type === 'text'){
+      ctx.font = `${(o.size||22)*k}px monospace`;
+      ctx.textAlign = 'left';
+      ctx.strokeStyle = '#05080B'; ctx.lineWidth = 4*k;
+      ctx.strokeText(o.text, o.pos[0]*k, o.pos[1]*k);
+      ctx.fillStyle = o.color;
+      ctx.fillText(o.text, o.pos[0]*k, o.pos[1]*k);
+    }
+    else if (o.type === 'agent' || o.type === 'util'){
+      const size = (o.type === 'agent' ? 44 : 34) * k;
+
+      // Area of effect underneath the icon, matching the on-screen render.
+      if (o.aoe && state.showAoe){
+        const tint = AOE_TINT[o.aoe.kind] || o.color;
+        ctx.save();
+        ctx.globalAlpha = 0.16; ctx.fillStyle = tint;
+        ctx.strokeStyle = tint; ctx.lineWidth = 2*k;
+        const A = o.aoe, X = o.pos[0]*k, Y = o.pos[1]*k;
+
+        // Dashed reach ring, unfilled — matches the on-screen render.
+        if (A.castRange){
+          ctx.save();
+          ctx.globalAlpha = 0.32; ctx.setLineDash([7*k, 6*k]); ctx.lineWidth = 1.5*k;
+          ctx.beginPath(); ctx.arc(X, Y, metresToView(A.castRange)*k, 0, Math.PI*2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        if (A.shape === 'circle'){
+          ctx.beginPath(); ctx.arc(X, Y, metresToView(A.r)*k, 0, Math.PI*2);
+          ctx.fill();
+          ctx.globalAlpha = 0.65; ctx.stroke();
+          if (A.inner){
+            ctx.globalAlpha = 0.22;
+            ctx.beginPath(); ctx.arc(X, Y, metresToView(A.inner)*k, 0, Math.PI*2);
+            ctx.fill();
+          }
+        }
+        else if (A.shape === 'cone'){
+          const L = metresToView(A.len)*k;
+          const half = (A.deg/2) * Math.PI/180;
+          const a = (A.angle||0) * Math.PI/180;
+          ctx.beginPath();
+          ctx.moveTo(X, Y);
+          ctx.arc(X, Y, L, a-half, a+half);
+          ctx.closePath();
+          ctx.fill();
+          ctx.globalAlpha = 0.65; ctx.stroke();
+        }
+        else if (A.shape === 'mesh'){
+          ctx.globalAlpha = 0.8;
+          ctx.lineWidth = Math.max(3*k, metresToView(0.6)*k);
+          ctx.lineCap = 'round';
+          for (const end of meshArms(o)){
+            ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(end[0]*k, end[1]*k); ctx.stroke();
+          }
+        }
+        else if (A.shape === 'curve'){
+          const { end, ctrl } = curvePoints(o);
+          ctx.globalAlpha = 0.45;
+          ctx.lineWidth = Math.max(4*k, metresToView(A.wid)*k);
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(X, Y);
+          ctx.quadraticCurveTo(ctrl[0]*k, ctrl[1]*k, end[0]*k, end[1]*k);
+          ctx.stroke();
+        }
+        else if (A.shape === 'strip'){
+          const L = metresToView(A.len)*k, W = metresToView(A.wid)*k;
+          ctx.translate(X, Y);
+          ctx.rotate((A.angle||0) * Math.PI/180);
+          ctx.beginPath(); ctx.rect(0, -W/2, L, W);
+          ctx.fill();
+          ctx.globalAlpha = 0.65; ctx.stroke();
+        }
+        // 'range' has no footprint beyond the ring drawn above.
+        ctx.restore();
+      }
+
+      ctx.beginPath();
+      ctx.arc(o.pos[0]*k, o.pos[1]*k, size/2 + 3*k, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(5,8,11,0.75)'; ctx.fill();
+      ctx.strokeStyle = o.color; ctx.lineWidth = 2*k; ctx.stroke();
+      try {
+        const im = await loadImg(o.icon);
+        ctx.drawImage(im, o.pos[0]*k - size/2, o.pos[1]*k - size/2, size, size);
+      } catch { /* icon unavailable — the ring still marks the spot */ }
+    }
+  }
+
+  try {
+    const url = cv.toDataURL('image/png');
+    const a = document.createElement('a');
+    const nm = ($('stratName').value || 'strategy').replace(/[^\w\- ]+/g,'').trim() || 'strategy';
+    a.href = url;
+    a.download = `${nm} — ${state.map.displayName}.png`;
+    a.click();
+    setStatus('png exported');
+  } catch (e){
+    // Tainted canvas: an icon host did not send CORS headers.
+    setStatus('could not export png (image CORS blocked)', true);
+  }
+}
+
+function drawArrowHead(ctx, o, k){
+  const ang = Math.atan2(o.b[1]-o.a[1], o.b[0]-o.a[0]);
+  const len = 14 * k;
+  ctx.beginPath();
+  ctx.moveTo(o.b[0]*k, o.b[1]*k);
+  ctx.lineTo(o.b[0]*k - len*Math.cos(ang - Math.PI/7), o.b[1]*k - len*Math.sin(ang - Math.PI/7));
+  ctx.lineTo(o.b[0]*k - len*Math.cos(ang + Math.PI/7), o.b[1]*k - len*Math.sin(ang + Math.PI/7));
+  ctx.closePath();
+  ctx.fillStyle = o.color;
+  ctx.fill();
+}
+
+function loadImg(src){
+  return new Promise((res, rej) => {
+    const im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = () => res(im);
+    im.onerror = rej;
+    im.src = src;
+  });
+}
+
+/* ------------------------------------------------------------------- setup */
+
+function selectMap(uuid, keepObjects){
+  const m = state.maps.find(x => x.uuid === uuid);
+  if (!m) return;
+  state.map = m;
+  $('mapImg').setAttributeNS('http://www.w3.org/1999/xlink','href', m.displayIcon);
+  $('mapImg').setAttribute('href', m.displayIcon);
+  $('mapHint').style.display = 'none';
+  if (!keepObjects){
+    state.objects = [];
+    state.selectedId = null;
+    state.history.length = 0; state.future.length = 0;
+    state.currentId = null;
+  }
+  render(); refreshUndoButtons();
+}
+
+function buildSwatches(){
+  const box = $('swatches');
+  box.innerHTML = '';
+  COLORS.forEach(c => {
+    const d = document.createElement('div');
+    d.className = 'sw' + (c === state.color ? ' on' : '');
+    d.style.background = c;
+    d.onclick = () => { state.color = c; buildSwatches(); };
+    box.appendChild(d);
+  });
+}
+
+function wire(){
+  $('toolGrid').onclick = e => {
+    const t = e.target.closest('.tool');
+    if (!t) return;
+    state.tool = t.dataset.tool;
+    state.ability = null; state.armed = null;
+    renderAgents(); renderAbilities();
+    [...$('toolGrid').children].forEach(c => c.classList.toggle('on', c === t));
+    $('board').classList.toggle('sel', state.tool === 'select');
+    renderObjects();
+    setStatus('');
+  };
+
+  $('mapSel').onchange = e => selectMap(e.target.value);
+
+  $('calloutBtn').onclick = () => {
+    state.showCallouts = !state.showCallouts;
+    $('calloutBtn').textContent = 'CALLOUTS: ' + (state.showCallouts ? 'ON' : 'OFF');
+    renderCallouts();
+  };
+
+  $('aoeBtn').onclick = () => {
+    state.showAoe = !state.showAoe;
+    $('aoeBtn').textContent = 'AREAS: ' + (state.showAoe ? 'ON' : 'OFF');
+    render();
+  };
+
+  $('undoBtn').onclick = undo;
+  $('redoBtn').onclick = redo;
+  $('clearBtn').onclick = () => {
+    if (!state.objects.length) return;
+    if (!confirm('Clear everything on this map?')) return;
+    pushHistory();
+    state.objects = []; state.selectedId = null;
+    render();
+  };
+
+  $('saveBtn').onclick = saveStrategy;
+  $('pngBtn').onclick = exportPng;
+  $('newBtn').onclick = () => {
+    if (state.objects.length && !confirm('Start a new strategy? Unsaved work is lost.')) return;
+    state.objects = []; state.selectedId = null; state.currentId = null;
+    state.history.length = 0; state.future.length = 0;
+    $('stratName').value = '';
+    render(); refreshUndoButtons();
+    setStatus('');
+  };
+
+  const svg = $('board');
+  svg.addEventListener('pointerdown', onPointerDown);
+  svg.addEventListener('pointermove', onPointerMove);
+  svg.addEventListener('pointerup', onPointerUp);
+  svg.addEventListener('pointercancel', onPointerUp);
+
+  document.addEventListener('keydown', e => {
+    const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+    if (typing) return;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedId){
+      e.preventDefault();
+      pushHistory();
+      state.objects = state.objects.filter(o => o.id !== state.selectedId);
+      state.selectedId = null;
+      render();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z'){
+      e.preventDefault();
+      e.shiftKey ? redo() : undo();
+    }
+  });
+}
+
+async function init(){
+  buildSwatches();
+  wire();
+  renderSaved();
+  refreshUndoButtons();
+  try {
+    await loadStaticData();
+  } catch (e){
+    setStatus('could not load map data: ' + e.message, true);
+    return;
+  }
+  try {
+    // Ability areas are a separate dataset. A failure here degrades rather than
+    // blocks — the board stays fully usable for drawing without it.
+    await loadAbilityData();
+  } catch (e){
+    setStatus('ability areas unavailable: ' + e.message, true);
+  }
+  const sel = $('mapSel');
+  sel.innerHTML = '';
+  for (const m of state.maps){
+    const o = document.createElement('option');
+    o.value = m.uuid; o.textContent = m.displayName.toUpperCase();
+    sel.appendChild(o);
+  }
+  // Ability sizes go stale when Riot reworks an agent, and a silently stale
+  // number is worse than a missing one — so the dataset's own version is shown.
+  if (ABILITY_META){
+    $('dataVer').textContent =
+      `ABILITY AREAS: PATCH ${ABILITY_META.game_version} (${ABILITY_META.date}) · ~ = APPROXIMATE, DRAG ANY HANDLE TO CORRECT`;
+  }
+
+  renderAgents();
+  if (state.maps.length) selectMap(state.maps[0].uuid);
+}
+
+init();
+</script>
+</body>
+</html>

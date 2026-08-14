@@ -1,0 +1,2615 @@
+{
+  "metadata": {
+    "file": "valorant_abilities.json",
+    "purpose": "VALORANT tactical/Valoplant-style ability visualization and gameplay analysis",
+    "game_version": "13.02",
+    "date": "2026-08-14",
+    "agent_count": 29,
+    "ability_count": 116,
+    "units": {
+      "distance": "meters",
+      "duration": "seconds",
+      "damage": "HP"
+    },
+    "status": "Visualization-ready reference dataset",
+    "accuracy_note": "Approximate fields must be re-verified after patches. Riot's official patch notes/content catalog are authoritative for live changes.",
+    "local_amendments": [
+      "2026-08-14 Harbor (Patch 11.10 rework): replaced 'Cascade' with 'Storm Surge' (wall -> circle, nearsight+slow); updated 'Reckoning' from a circular stun/knockup to a forward-travelling nearsight+slow wave. Both sizes are unverified estimates. Detected because the live valorant-api agent list no longer contains Cascade.",
+      "2026-08-14 Line/wall dimensions: replaced estimated widths and missing lengths for 18 abilities with values from wiki.playvalorant.com. Added min_length_m where the player controls the length (charged or drawn); its absence means the length is fixed and only the direction is chosen. Yoru Fakeout left without dimensions - the wiki documents none, so it draws no area rather than an invented one.",
+      "2026-08-14 Pass 2: corrected Sova Recon Bolt (5 -> 30 m radius) and Shock Bolt (5 -> 4 m); reshaped Breach Aftershock, Deadlock Sonic Sensor and Iso Kill Contract from circles/points to their real rectangular areas; added Killjoy Turret and Miks Bassquake cones; added Deadlock Barrier Mesh as a 4-arm mesh; added cast ranges for Gekko Dizzy, Veto Crosscut and Breach Aftershock; flagged Curveball / Guiding Light / Guided Salvo as user-drawn curves. Phoenix Run It Back range is DERIVED from movement speed, not documented."
+    ]
+  },
+  "schema": {
+    "shape": "circle|line|cone|wall|map_wide|projectile|point|target|self|custom",
+    "radius_m": "AoE radius; null when not applicable",
+    "diameter_m": "2 x radius; null when not applicable",
+    "width_m": "line/cone width; null when not applicable",
+    "length_m": "wall/line length when known",
+    "duration_s": "zone/object duration",
+    "effect_duration_s": "secondary status duration",
+    "cast_range_m": "maximum placement/target range when known",
+    "damage": "direct/maximum damage when known",
+    "damage_per_second": "DPS when known",
+    "slow_percent": "slow percentage when applicable",
+    "tags": "mechanics used by the app",
+    "approximate": "true means verify against current game files before treating as exact"
+  },
+  "agents": [
+    {
+      "name": "Astra",
+      "role": "Controller",
+      "abilities": [
+        {
+          "name": "Gravity Well",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2.75,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "pull",
+            "vulnerable",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Nova Pulse",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2.75,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "concuss",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Nebula",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 4.75,
+          "diameter_m": 9.5,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 14.25,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "vision_block"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Cosmic Divide",
+          "slot": "X",
+          "shape": "map_wide",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 20,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "bullet_block",
+            "audio_block",
+            "vision_block"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Breach",
+      "role": "Initiator",
+      "abilities": [
+        {
+          "name": "Aftershock",
+          "slot": "C",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 6,
+          "length_m": 10,
+          "duration_s": 2.4,
+          "effect_duration_s": null,
+          "cast_range_m": 35,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "wall_piercing",
+            "aoe"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 10 m length, 3 m radius -> 6 m width; 35 m max deploy"
+        },
+        {
+          "name": "Flashpoint",
+          "slot": "Q",
+          "shape": "projectile",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "flash",
+            "wall_piercing"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Fault Line",
+          "slot": "E",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 8,
+          "length_m": 56,
+          "duration_s": 1.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "concuss",
+            "wall_piercing"
+          ],
+          "approximate": false,
+          "min_length_m": 8,
+          "_source": "wiki.playvalorant.com — 8-56 m depending on charge"
+        },
+        {
+          "name": "Rolling Thunder",
+          "slot": "X",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 18,
+          "length_m": 32,
+          "duration_s": 6,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "knockup",
+            "concuss",
+            "aoe"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com"
+        }
+      ]
+    },
+    {
+      "name": "Brimstone",
+      "role": "Controller",
+      "abilities": [
+        {
+          "name": "Stim Beacon",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 6,
+          "diameter_m": 12,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 12,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "ally_buff",
+            "rapidfire"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Incendiary",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 4.5,
+          "diameter_m": 9,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 8,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "fire",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Sky Smoke",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 19.25,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "vision_block"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Orbital Strike",
+          "slot": "X",
+          "shape": "circle",
+          "radius_m": 7,
+          "diameter_m": 14,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 3,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "aoe",
+            "wall_piercing"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Chamber",
+      "role": "Sentinel",
+      "abilities": [
+        {
+          "name": "Trademark",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 6,
+          "diameter_m": 12,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "trap",
+            "slow",
+            "detection"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Headhunter",
+          "slot": "Q",
+          "shape": "projectile",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "weapon"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Rendezvous",
+          "slot": "E",
+          "shape": "point",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "teleport",
+            "anchor"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Tour De Force",
+          "slot": "X",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "weapon",
+            "ultimate"
+          ],
+          "approximate": false
+        }
+      ]
+    },
+    {
+      "name": "Clove",
+      "role": "Controller",
+      "abilities": [
+        {
+          "name": "Pick-Me-Up",
+          "slot": "C",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 12,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "self_buff",
+            "assist"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Meddle",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "decay",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Ruse",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 14,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "vision_block"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Not Dead Yet",
+          "slot": "X",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "revive",
+            "ultimate"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Cypher",
+      "role": "Sentinel",
+      "abilities": [
+        {
+          "name": "Trapwire",
+          "slot": "C",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 0.5,
+          "length_m": 15,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "trap",
+            "detection",
+            "concuss"
+          ],
+          "approximate": false,
+          "min_length_m": 1,
+          "_source": "wiki.playvalorant.com — max wire length 15 m"
+        },
+        {
+          "name": "Cyber Cage",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 4.5,
+          "diameter_m": 9,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 7.25,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "vision_block",
+            "slow"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Spycam",
+          "slot": "E",
+          "shape": "point",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "camera",
+            "detection"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Neural Theft",
+          "slot": "X",
+          "shape": "map_wide",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "reveal",
+            "detection"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Deadlock",
+      "role": "Sentinel",
+      "abilities": [
+        {
+          "name": "GravNet",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 6,
+          "diameter_m": 12,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 6,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "slow",
+            "crouch",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Sonic Sensor",
+          "slot": "Q",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 8,
+          "length_m": 9,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": 14,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "detection",
+            "concuss"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 9 x 8 m concuss area, 14 m max deploy"
+        },
+        {
+          "name": "Barrier Mesh",
+          "slot": "E",
+          "shape": "mesh",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": 10,
+          "duration_s": 30,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "block"
+          ],
+          "approximate": false,
+          "arm_length_m": 10,
+          "arms": 4,
+          "_source": "wiki.playvalorant.com — central orb plus up to 4 connected walls, 10 m barrier length"
+        },
+        {
+          "name": "Annihilation",
+          "slot": "X",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 6,
+          "length_m": 40,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "capture",
+            "knockback"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 3 m pulse radius -> 6 m width"
+        }
+      ]
+    },
+    {
+      "name": "Fade",
+      "role": "Initiator",
+      "abilities": [
+        {
+          "name": "Prowler",
+          "slot": "C",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "nearsight",
+            "trail"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Seize",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 6,
+          "diameter_m": 12,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "detain",
+            "decay",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Haunt",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 30,
+          "diameter_m": 60,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 1.5,
+          "effect_duration_s": 12,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "reveal",
+            "detection"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Nightfall",
+          "slot": "X",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 20,
+          "length_m": 40,
+          "duration_s": 12,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "decay",
+            "deafen",
+            "trail",
+            "aoe"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com"
+        }
+      ]
+    },
+    {
+      "name": "Gekko",
+      "role": "Initiator",
+      "abilities": [
+        {
+          "name": "Mosh Pit",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Wingman",
+          "slot": "Q",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "plant",
+            "defuse",
+            "concuss"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Dizzy",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 2.5,
+          "diameter_m": 5,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2,
+          "effect_duration_s": null,
+          "cast_range_m": 45,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "flash",
+            "aoe"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 2.5 m plasma blind radius, 45 m max detection distance"
+        },
+        {
+          "name": "Thrash",
+          "slot": "X",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 6,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "detain",
+            "aoe"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Harbor",
+      "role": "Controller",
+      "abilities": [
+        {
+          "name": "Storm Surge",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "nearsight",
+            "slow",
+            "aoe"
+          ],
+          "approximate": true,
+          "_note": "Replaced Cascade in the Patch 11.10 Harbor rework. Explosive whirlpool that nearsights and slows enemies inside it after a short delay. Radius is an unverified estimate - measure in game and correct."
+        },
+        {
+          "name": "Cove",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 4.6,
+          "diameter_m": 9.2,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 19.25,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "shield",
+            "vision_block"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "High Tide",
+          "slot": "E",
+          "shape": "wall",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 1,
+          "length_m": 60,
+          "duration_s": 15,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "slow",
+            "vision_block"
+          ],
+          "approximate": false,
+          "min_length_m": 1,
+          "_source": "wiki.playvalorant.com"
+        },
+        {
+          "name": "Reckoning",
+          "slot": "X",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 21,
+          "length_m": 34,
+          "duration_s": 7,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "nearsight",
+            "slow",
+            "aoe"
+          ],
+          "approximate": false,
+          "_note": "Redesigned in the Patch 11.10 Harbor rework: no longer a circular stun/knockup, now a tidal wave that travels forward nearsighting and slowing everything in its path. Width is an unverified estimate.",
+          "_source": "wiki.playvalorant.com — travel distance 34 m, total wave width 21 m"
+        }
+      ]
+    },
+    {
+      "name": "Iso",
+      "role": "Duelist",
+      "abilities": [
+        {
+          "name": "Contingency",
+          "slot": "C",
+          "shape": "wall",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 1,
+          "length_m": 20,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "bullet_block"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com"
+        },
+        {
+          "name": "Undercut",
+          "slot": "Q",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 6,
+          "length_m": 34.9,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "vulnerable",
+            "aoe"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 3 m radius -> 6 m width"
+        },
+        {
+          "name": "Double Tap",
+          "slot": "E",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 15,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "shield",
+            "self_buff"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Kill Contract",
+          "slot": "X",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 15,
+          "length_m": 36,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "duel",
+            "ultimate"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 36 x 15 m column area"
+        }
+      ]
+    },
+    {
+      "name": "Jett",
+      "role": "Duelist",
+      "abilities": [
+        {
+          "name": "Cloudburst",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "vision_block"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Updraft",
+          "slot": "Q",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "movement"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Tailwind",
+          "slot": "E",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "movement"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Blade Storm",
+          "slot": "X",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "weapon",
+            "ultimate"
+          ],
+          "approximate": false
+        }
+      ]
+    },
+    {
+      "name": "KAY/O",
+      "role": "Initiator",
+      "abilities": [
+        {
+          "name": "FRAG/ment",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "FLASH/drive",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 1.6,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "flash"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "ZERO/point",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 15,
+          "diameter_m": 30,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "suppress",
+            "detection",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "NULL/cmd",
+          "slot": "X",
+          "shape": "circle",
+          "radius_m": 15,
+          "diameter_m": 30,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 12,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "suppress",
+            "downed",
+            "aoe"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Killjoy",
+      "role": "Sentinel",
+      "abilities": [
+        {
+          "name": "Nanoswarm",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": 45,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Alarmbot",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "trap",
+            "vulnerable",
+            "detection"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Turret",
+          "slot": "E",
+          "shape": "cone",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": 40,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "turret",
+            "detection",
+            "damage"
+          ],
+          "approximate": false,
+          "cone_degrees": 100,
+          "_source": "wiki.playvalorant.com — 100 deg detection cone, 40 m proximity radius"
+        },
+        {
+          "name": "Lockdown",
+          "slot": "X",
+          "shape": "circle",
+          "radius_m": 30,
+          "diameter_m": 60,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 13,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "detain",
+            "aoe"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Miks",
+      "role": "Controller",
+      "abilities": [
+        {
+          "name": "M-pulse",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 6,
+          "diameter_m": 12,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": 2,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "concuss",
+            "heal",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Harmonize",
+          "slot": "Q",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "combat_stim",
+            "ally_buff"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Waveform",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 4.75,
+          "diameter_m": 9.5,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 16,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "vision_block"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Bassquake",
+          "slot": "X",
+          "shape": "cone",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": 40,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "knockback",
+            "deafen",
+            "slow",
+            "aoe"
+          ],
+          "approximate": false,
+          "cone_degrees": 60,
+          "_source": "wiki.playvalorant.com — 60 deg, 40 m radius"
+        }
+      ]
+    },
+    {
+      "name": "Neon",
+      "role": "Duelist",
+      "abilities": [
+        {
+          "name": "Fast Lane",
+          "slot": "C",
+          "shape": "wall",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 4,
+          "length_m": 28,
+          "duration_s": 6,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "damage",
+            "vision_block"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — two parallel walls; drawn as the corridor between them"
+        },
+        {
+          "name": "Relay Bolt",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "concuss",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "High Gear",
+          "slot": "E",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "movement",
+            "sprint"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Overdrive",
+          "slot": "X",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 20,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "weapon",
+            "ultimate"
+          ],
+          "approximate": false
+        }
+      ]
+    },
+    {
+      "name": "Omen",
+      "role": "Controller",
+      "abilities": [
+        {
+          "name": "Shrouded Step",
+          "slot": "C",
+          "shape": "point",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "teleport"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Paranoia",
+          "slot": "Q",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 8.6,
+          "length_m": 25,
+          "duration_s": 2.75,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "nearsight",
+            "deafen",
+            "wall_piercing"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 4.3 m radius -> 8.6 m width"
+        },
+        {
+          "name": "Dark Cover",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 15,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "vision_block"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "From the Shadows",
+          "slot": "X",
+          "shape": "map_wide",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "teleport",
+            "ultimate"
+          ],
+          "approximate": false
+        }
+      ]
+    },
+    {
+      "name": "Phoenix",
+      "role": "Duelist",
+      "abilities": [
+        {
+          "name": "Blaze",
+          "slot": "C",
+          "shape": "wall",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 1,
+          "length_m": 20,
+          "duration_s": 8,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "damage",
+            "heal",
+            "vision_block"
+          ],
+          "approximate": false,
+          "min_length_m": 1,
+          "_source": "wiki.playvalorant.com"
+        },
+        {
+          "name": "Curveball",
+          "slot": "Q",
+          "shape": "curve",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": 2,
+          "length_m": 20,
+          "duration_s": 1.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "flash"
+          ],
+          "approximate": true,
+          "curvable": true,
+          "_source": "Curve geometry is not documented by Riot; the planner lets you draw the intended path."
+        },
+        {
+          "name": "Hot Hands",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "heal",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Run It Back",
+          "slot": "X",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 10,
+          "effect_duration_s": null,
+          "cast_range_m": 60,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "reset",
+            "ultimate"
+          ],
+          "approximate": true,
+          "_source": "wiki.playvalorant.com — DERIVED, not documented: ~6.75 m/s run speed x ~9 s of usable ult time. Unobstructed straight-line reach; real map distance will be shorter."
+        }
+      ]
+    },
+    {
+      "name": "Raze",
+      "role": "Duelist",
+      "abilities": [
+        {
+          "name": "Boom Bot",
+          "slot": "C",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "detection"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Blast Pack",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "knockback"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Paint Shells",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "cluster",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Showstopper",
+          "slot": "X",
+          "shape": "circle",
+          "radius_m": 7,
+          "diameter_m": 14,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": 150,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "rocket",
+            "aoe"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Reyna",
+      "role": "Duelist",
+      "abilities": [
+        {
+          "name": "Leer",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 7,
+          "diameter_m": 14,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "nearsight"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Devour",
+          "slot": "Q",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "heal"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Dismiss",
+          "slot": "E",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "invulnerable",
+            "movement"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Empress",
+          "slot": "X",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 30,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "self_buff",
+            "ultimate"
+          ],
+          "approximate": false
+        }
+      ]
+    },
+    {
+      "name": "Sage",
+      "role": "Sentinel",
+      "abilities": [
+        {
+          "name": "Barrier Orb",
+          "slot": "C",
+          "shape": "wall",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 1,
+          "length_m": 6,
+          "duration_s": 40,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "block"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com"
+        },
+        {
+          "name": "Slow Orb",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 7,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": 50,
+          "tags": [
+            "slow",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Healing Orb",
+          "slot": "E",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "heal"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Resurrection",
+          "slot": "X",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "revive",
+            "ultimate"
+          ],
+          "approximate": false
+        }
+      ]
+    },
+    {
+      "name": "Skye",
+      "role": "Initiator",
+      "abilities": [
+        {
+          "name": "Regrowth",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 20,
+          "diameter_m": 40,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 10,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "heal",
+            "ally"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Trailblazer",
+          "slot": "Q",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "concuss",
+            "detection"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Guiding Light",
+          "slot": "E",
+          "shape": "curve",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 2,
+          "length_m": 20,
+          "duration_s": 2,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "flash"
+          ],
+          "approximate": true,
+          "curvable": true,
+          "_source": "Curve geometry is not documented by Riot; the planner lets you draw the intended path."
+        },
+        {
+          "name": "Seekers",
+          "slot": "X",
+          "shape": "target",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "tracking",
+            "nearsight"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Sova",
+      "role": "Initiator",
+      "abilities": [
+        {
+          "name": "Owl Drone",
+          "slot": "C",
+          "shape": "custom",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 8,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "detection",
+            "reveal"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Shock Bolt",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 4,
+          "diameter_m": 8,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "aoe"
+          ],
+          "approximate": false,
+          "inner_radius_m": 1.5,
+          "_source": "wiki.playvalorant.com — 4 m outer / 1.5 m inner damage radius"
+        },
+        {
+          "name": "Recon Bolt",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 30,
+          "diameter_m": 60,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 3,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "reveal",
+            "detection",
+            "aoe"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 30 m scan radius, 2 pulses"
+        },
+        {
+          "name": "Hunter's Fury",
+          "slot": "X",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 3.52,
+          "length_m": 66,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "reveal",
+            "wall_piercing"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 1.76 m radius -> 3.52 m width"
+        }
+      ]
+    },
+    {
+      "name": "Tejo",
+      "role": "Initiator",
+      "abilities": [
+        {
+          "name": "Special Delivery",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 5.25,
+          "diameter_m": 10.5,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "concuss",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Guided Salvo",
+          "slot": "Q",
+          "shape": "curve",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": 2,
+          "length_m": 20,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "aoe"
+          ],
+          "approximate": true,
+          "curvable": true,
+          "_source": "Curve geometry is not documented by Riot; the planner lets you draw the intended path."
+        },
+        {
+          "name": "Stealth Drone",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 16,
+          "diameter_m": 32,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "detection",
+            "suppression",
+            "pulse"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Armageddon",
+          "slot": "X",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 12,
+          "length_m": 32,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "knockback",
+            "aoe"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 16 segments x 2 m"
+        }
+      ]
+    },
+    {
+      "name": "Veto",
+      "role": "Sentinel",
+      "abilities": [
+        {
+          "name": "Interceptor",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 18,
+          "diameter_m": 36,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 9,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "projectile_destroy",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Chokehold",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 6,
+          "diameter_m": 12,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "trap",
+            "slow",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Crosscut",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 30,
+          "diameter_m": 60,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": 20,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "movement",
+            "teleport"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com — 20 m max cast distance, 30 m vortex radius"
+        },
+        {
+          "name": "Evolution",
+          "slot": "X",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 12,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "ultimate",
+            "buff"
+          ],
+          "approximate": false
+        }
+      ]
+    },
+    {
+      "name": "Viper",
+      "role": "Controller",
+      "abilities": [
+        {
+          "name": "Snake Bite",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 4.5,
+          "diameter_m": 9,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 6.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "vulnerable",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Poison Cloud",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 4.75,
+          "diameter_m": 9.5,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "decay",
+            "vision_block"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Toxic Screen",
+          "slot": "E",
+          "shape": "wall",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 1,
+          "length_m": 50,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "decay",
+            "vision_block"
+          ],
+          "approximate": false,
+          "min_length_m": 1,
+          "_source": "wiki.playvalorant.com"
+        },
+        {
+          "name": "Viper's Pit",
+          "slot": "X",
+          "shape": "circle",
+          "radius_m": 10,
+          "diameter_m": 20,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "smoke",
+            "decay",
+            "vision_block",
+            "aoe"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Vyse",
+      "role": "Sentinel",
+      "abilities": [
+        {
+          "name": "Razorvine",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 6,
+          "diameter_m": 12,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 6,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "damage",
+            "slow",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Shear",
+          "slot": "Q",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 1,
+          "length_m": 12,
+          "duration_s": 8,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "wall",
+            "trap"
+          ],
+          "approximate": false,
+          "min_length_m": 1,
+          "_source": "wiki.playvalorant.com"
+        },
+        {
+          "name": "Arc Rose",
+          "slot": "E",
+          "shape": "circle",
+          "radius_m": 6,
+          "diameter_m": 12,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "flash",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Steel Garden",
+          "slot": "X",
+          "shape": "circle",
+          "radius_m": 28,
+          "diameter_m": 56,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 8,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "weapon_disable",
+            "aoe"
+          ],
+          "approximate": true
+        }
+      ]
+    },
+    {
+      "name": "Waylay",
+      "role": "Duelist",
+      "abilities": [
+        {
+          "name": "Saturate",
+          "slot": "C",
+          "shape": "circle",
+          "radius_m": 5,
+          "diameter_m": 10,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 4,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "slow",
+            "damage",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Lightspeed",
+          "slot": "Q",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "movement"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Refract",
+          "slot": "E",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 2,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "movement",
+            "reset"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Convergent Paths",
+          "slot": "X",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": 13.5,
+          "length_m": 36,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "slow",
+            "concuss",
+            "aoe"
+          ],
+          "approximate": false,
+          "_source": "wiki.playvalorant.com"
+        }
+      ]
+    },
+    {
+      "name": "Yoru",
+      "role": "Duelist",
+      "abilities": [
+        {
+          "name": "Fakeout",
+          "slot": "C",
+          "shape": "line",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "decoy",
+            "flash"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Blindside",
+          "slot": "Q",
+          "shape": "circle",
+          "radius_m": 2.5,
+          "diameter_m": 5,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 1.5,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "flash",
+            "aoe"
+          ],
+          "approximate": true
+        },
+        {
+          "name": "Gatecrash",
+          "slot": "E",
+          "shape": "point",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": null,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "teleport"
+          ],
+          "approximate": false
+        },
+        {
+          "name": "Dimensional Drift",
+          "slot": "X",
+          "shape": "self",
+          "radius_m": null,
+          "diameter_m": null,
+          "width_m": null,
+          "length_m": null,
+          "duration_s": 12,
+          "effect_duration_s": null,
+          "cast_range_m": null,
+          "damage": null,
+          "damage_per_second": null,
+          "slow_percent": null,
+          "tags": [
+            "invulnerable",
+            "movement",
+            "ultimate"
+          ],
+          "approximate": false
+        }
+      ]
+    }
+  ]
+}
