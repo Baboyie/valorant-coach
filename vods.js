@@ -218,6 +218,15 @@ async function addShot(matchId, { contentType, bytes, label }) {
 
   if (store.kind === 'postgres') {
     // Blob storage, because a serverless filesystem cannot hold it.
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      // Said plainly, because the library's own error names an environment
+      // variable without saying which deployment is missing it, and this
+      // surfaces to whoever just pasted a screenshot mid-review.
+      throw new Error(
+        'Scoreboard storage is not configured on this deployment: BLOB_READ_WRITE_TOKEN is missing. ' +
+        'Connect a Vercel Blob store to the project, or add the token manually, then redeploy.'
+      );
+    }
     const { put } = require('@vercel/blob');
     const blob = await put(`shots/${matchId}/${rec.id}.${ext}`, bytes, {
       access: 'public',

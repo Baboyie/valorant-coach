@@ -53,6 +53,12 @@ if (process.env.NODE_ENV === 'production' && auth.config().enabled
 // deployment with a bad connection string, looks perfectly healthy right up
 // until the first save fails.
 app.get('/api/health', async (_req, res) => {
+  // Reported, never returned: only whether a token exists, so this stays safe
+  // on a public endpoint. Scoreboards are the one thing that needs it, and
+  // without this the failure surfaces mid-review when someone pastes an image
+  // — long after the deploy that caused it.
+  const blob = vods.storeKind !== 'postgres' || !!process.env.BLOB_READ_WRITE_TOKEN;
+
   try {
     if (vods.storeKind === 'postgres') {
       await vods.ensureSchema();
@@ -64,9 +70,17 @@ app.get('/api/health', async (_req, res) => {
       await fsp.writeFile(probe, String(Date.now()));
       await fsp.rm(probe, { force: true });
     }
-    res.json({ ok: true, store: vods.storeKind, auth: auth.config().enabled });
+    res.json({
+      ok: true,
+      store: vods.storeKind,
+      auth: auth.config().enabled,
+      blob,
+      // ok stays true: everything except scoreboard upload still works, and
+      // failing the health check would take the whole site down over it.
+      ...(blob ? {} : { warning: 'BLOB_READ_WRITE_TOKEN is not set — scoreboard uploads will fail.' }),
+    });
   } catch (e) {
-    res.status(503).json({ ok: false, store: vods.storeKind, error: e.message });
+    res.status(503).json({ ok: false, store: vods.storeKind, blob, error: e.message });
   }
 });
 
