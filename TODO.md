@@ -38,7 +38,30 @@ The desktop app has never been assessed against this: `public/planner.html` is
 68 KB of tactical planner that may already do some of what a reviewer needs.
 Read that strand before designing anything new.
 
-## 3. Smaller things
+## 3. Gaps against the original requirement
+
+Full audit in [`docs/REQUIREMENTS-STATUS.md`](docs/REQUIREMENTS-STATUS.md). The
+three that matter, in order:
+
+- **ShadowPlay comparison (§18, §29).** The benchmark harness is rigorous but has
+  only baseline × ours. §30's entire positioning — "comparable to or better than
+  ShadowPlay" — is unproven without that column, and §1 forbids claiming it
+  unmeasured. Needs NVIDIA app installed and a play session; `Measure-Frames.ps1`
+  already recognises `shadowplay-run*` filenames, so it is running the runs, not
+  changing the analysis.
+- **In-app performance monitor (§17).** The app shows the recorder's health but
+  not the player's: no game FPS, frame time, CPU %, GPU %, VRAM, encoder
+  utilisation, or disk write speed. This is the screen that makes the product's
+  claim visible to the user mid-match, and §17 specifies it concretely.
+- **Microphone (§23).** Loopback captures what the player hears, not what they
+  say. For a team-review product this is the more valuable half, and it is what
+  makes §23's "separate audio tracks" meaningful.
+
+Also outstanding but lower value for now: Competitive/Quality/Custom presets
+(§11), storage estimation (§15), drive selection with free space and write speed
+(§14), selectable HEVC (§22), cloud upload (§13).
+
+## 4. Smaller things
 
 - **Code signing.** Smart App Control blocks unsigned binaries outright, so
   nothing ships to another machine until this is settled (ADR §9a). Independent
