@@ -1,77 +1,99 @@
-// VOD review: pick a teammate's POV, watch it, comment at timestamps.
+// VOD review: browse matches, open one, watch a teammate's POV, comment.
 //
-// Comments are anchored to a position in *this* video. An earlier design tried
-// to anchor them to a shared match timeline so one comment landed on the same
-// moment in all five POVs, but that needs every recording aligned to the
-// millisecond — and the team watches together on Discord anyway, so the
-// alignment bought nothing it was worth paying for.
+// Two views on one page rather than two pages, because switching between "which
+// scrim" and "whose POV" is the main thing a team does in a review and a
+// navigation round trip each time would be felt.
 
 const state = {
-  videos: [],
-  current: null,
+  matches: [],
+  unfiled: [],
+  maps: [],
+  match: null,   // the open match
+  vod: null,     // the POV being watched
   player: null,
   ready: false,
-  // null when sign-in is not configured on this server, in which case the app
-  // behaves as the open LAN tool it was before auth existed.
   auth: { enabled: false, user: null, clientId: null },
+  demoUser: null, // stands in for a signed-in user until sign-in is configured
 };
 
 const $ = (id) => document.getElementById(id);
 
-/* ------------------------------------------------------------ utilities */
+/* ---------------------------------------------------------------- utils */
 
-/** 0:07, 4:31, 1:02:09 — the format people actually write timestamps in. */
 function fmt(secs) {
   const s = Math.max(0, Math.floor(secs));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  return h > 0
-    ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
-    : `${m}:${String(ss).padStart(2, '0')}`;
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
+           : `${m}:${String(ss).padStart(2, '0')}`;
+}
+
+/** "Sat 15 Aug" — enough to tell an evening's scrims apart at a glance. */
+function prettyDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 async function api(path, opts) {
-  // credentials: 'same-origin' so the session cookie rides along; without it
-  // every authenticated request would come back 401.
   const res = await fetch(path, { credentials: 'same-origin', ...(opts || {}) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
 
-/* ------------------------------------------------------------------ auth */
+/** YouTube serves thumbnails without an API key, so POV tiles cost nothing. */
+const thumb = (videoId) => `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+
+/* ----------------------------------------------------------------- auth */
 
 async function loadAuth() {
-  try {
-    state.auth = await api('/api/auth/me');
-  } catch {
-    state.auth = { enabled: false, user: null, clientId: null };
-  }
+  try { state.auth = await api('/api/auth/me'); } catch { /* stays disabled */ }
   renderAuth();
-  if (state.auth.enabled && !state.auth.user) mountSignIn();
+  if (state.auth.enabled && !state.auth.user) mountRealSignIn();
+}
+
+function currentUser() {
+  return state.auth.user || state.demoUser;
 }
 
 function renderAuth() {
-  const { enabled, user } = state.auth;
-  const signedIn = !!user;
-  $('whoami').classList.toggle('hidden', !signedIn);
-  $('signinSlot').classList.toggle('hidden', !enabled || signedIn);
+  const u = currentUser();
+  const real = state.auth.enabled;
 
-  if (signedIn) {
-    $('myname').textContent = user.name;
-    if (user.picture) $('avatar').src = user.picture;
-    $('avatar').classList.toggle('hidden', !user.picture);
+  // Real Google button only when the server has a client id; otherwise the
+  // demo button, so the sign-in and profile flow can be looked at before any
+  // Google Cloud project exists.
+  $('signinSlot').classList.toggle('hidden', !real || !!u);
+  $('demoSignIn').classList.toggle('hidden', real || !!u);
+  $('profileBtn').classList.toggle('hidden', !u);
+
+  if (u) {
+    $('myname').textContent = u.name;
+    $('avatar').src = u.picture || '';
+    $('pAvatar').src = u.picture || '';
+    $('pName').textContent = u.name;
+    $('pEmail').textContent = u.email;
+    $('pRole').textContent = u.role || 'player';
+    $('pVods').textContent = state.matches.reduce((n, m) => n + m.vods.filter((v) => v.player === u.name).length, 0);
+    $('pComments').textContent = u.demo ? '—' : '—';
+    $('pScrims').textContent = state.matches.length;
+    $('pDemoNote').classList.toggle('hidden', !u.demo);
+    if (u.demo) {
+      $('pDemoNote').textContent =
+        'Demo profile. Set GOOGLE_CLIENT_ID and DEBRIEF_ALLOWED_EMAILS on the server to switch this to real Google sign-in — the code path is already built.';
+    }
   }
 
-  // When identity is verified the author field stops being editable — a
-  // free-text name is worth nothing in an argument about who said what.
-  $('author').classList.toggle('hidden', signedIn);
-  $('authorFixed').classList.toggle('hidden', !signedIn);
-  if (signedIn) $('authorFixed').textContent = user.name;
+  // With verified identity the author field is not editable: a free-text name
+  // is worth nothing in an argument about who said what.
+  const verified = !!state.auth.user;
+  $('author').classList.toggle('hidden', verified);
+  $('authorFixed').classList.toggle('hidden', !verified);
+  if (verified) $('authorFixed').textContent = state.auth.user.name;
 }
 
-function mountSignIn() {
+function mountRealSignIn() {
   const s = document.createElement('script');
   s.src = 'https://accounts.google.com/gsi/client';
   s.async = true;
@@ -86,127 +108,207 @@ function mountSignIn() {
             body: JSON.stringify({ credential: resp.credential }),
           });
           await loadAuth();
-        } catch (e) {
-          $('addErr').textContent = e.message;
-          $('addErr').classList.remove('hidden');
-        }
+        } catch (e) { alert(e.message); }
       },
     });
-    google.accounts.id.renderButton($('signinSlot'), {
-      theme: 'filled_black',
-      size: 'medium',
-      text: 'signin',
-    });
+    google.accounts.id.renderButton($('signinSlot'), { theme: 'filled_black', size: 'medium', text: 'signin' });
   };
   document.head.appendChild(s);
 }
 
-/* -------------------------------------------------------- youtube player */
+/* ----------------------------------------------------------------- maps */
 
-// The IFrame API loads asynchronously and calls a global hook, so the player
-// cannot be created until it fires.
-let apiReady = new Promise((resolve) => {
-  window.onYouTubeIframeAPIReady = resolve;
-});
+// Same source the planner uses, so the two pages agree on names and art.
+async function loadMaps() {
+  try {
+    const r = await fetch('https://valorant-api.com/v1/maps');
+    const j = await r.json();
+    state.maps = (j.data || [])
+      .filter((m) => m.displayName && m.splash && m.displayName !== 'The Range')
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  } catch {
+    state.maps = [];
+  }
+  const sel = $('fMap');
+  sel.innerHTML = '';
+  for (const m of state.maps) {
+    const o = document.createElement('option');
+    o.value = m.displayName;
+    o.textContent = m.displayName;
+    sel.appendChild(o);
+  }
+}
 
-(function loadYouTubeApi() {
+const splashFor = (name) => (state.maps.find((m) => m.displayName === name) || {}).splash || '';
+
+/* -------------------------------------------------------------- matches */
+
+async function loadMatches() {
+  const d = await api('/api/scrims');
+  state.matches = d.matches;
+  state.unfiled = d.unfiled;
+  renderMatches();
+}
+
+function renderMatches() {
+  const grid = $('matchGrid');
+  grid.innerHTML = '';
+  $('noMatches').classList.toggle('hidden', state.matches.length > 0);
+
+  state.matches.forEach((m, idx) => {
+    const card = document.createElement('button');
+    card.className = 'card';
+
+    const art = document.createElement('div');
+    art.className = 'art';
+    if (m.mapSplash) {
+      const img = document.createElement('img');
+      img.src = m.mapSplash;
+      img.alt = m.map;
+      // The first row is always on screen, so lazy-loading it only delays the
+      // thing the page is for. Everything below stays lazy.
+      img.loading = idx < 4 ? 'eager' : 'lazy';
+      art.appendChild(img);
+    }
+
+    const kind = document.createElement('span');
+    kind.className = 'kind';
+    kind.textContent = m.kind;
+
+    const over = document.createElement('div');
+    over.className = 'over';
+    const map = document.createElement('div');
+    map.className = 'map';
+    map.textContent = m.map || 'Unknown map';
+    const lab = document.createElement('div');
+    lab.className = 'lab';
+    lab.textContent = m.label || '';
+    over.append(map, lab);
+    art.append(kind, over);
+
+    const foot = document.createElement('div');
+    foot.className = 'foot';
+    const left = document.createElement('span');
+    left.textContent = [prettyDate(m.playedOn), m.score].filter(Boolean).join(' · ');
+    const right = document.createElement('span');
+    right.className = 'count';
+    right.textContent = `${m.vods.length} POV${m.vods.length === 1 ? '' : 's'}`;
+    foot.append(left, right);
+
+    card.append(art, foot);
+    card.addEventListener('click', () => openMatch(m.id));
+    grid.appendChild(card);
+  });
+
+  $('unfiledWrap').classList.toggle('hidden', state.unfiled.length === 0);
+  const ul = $('unfiled');
+  ul.innerHTML = '';
+  for (const v of state.unfiled) {
+    const li = document.createElement('li');
+    li.textContent = `${v.player || 'unknown'} — ${v.label || v.videoId}`;
+    ul.appendChild(li);
+  }
+}
+
+function openMatch(id) {
+  const m = state.matches.find((x) => x.id === id);
+  if (!m) return;
+  state.match = m;
+  state.vod = null;
+
+  $('viewMatches').classList.add('hidden');
+  $('viewMatch').classList.remove('hidden');
+  $('stage').classList.add('hidden');
+
+  $('mHero').src = m.mapSplash || '';
+  $('mKind').textContent = m.kind;
+  $('mTitle').textContent = m.label || m.map || 'Match';
+  $('mSub').textContent = [m.map, prettyDate(m.playedOn), m.score].filter(Boolean).join(' · ');
+
+  renderPovs();
+}
+
+function renderPovs() {
+  const grid = $('povGrid');
+  grid.innerHTML = '';
+  const list = state.match.vods;
+  $('noPovs').classList.toggle('hidden', list.length > 0);
+
+  for (const v of list) {
+    const b = document.createElement('button');
+    b.className = 'pov' + (state.vod && state.vod.id === v.id ? ' active' : '');
+
+    const th = document.createElement('div');
+    th.className = 'thumb';
+    const img = document.createElement('img');
+    img.src = thumb(v.videoId);
+    img.alt = '';
+    img.loading = 'lazy';
+    const play = document.createElement('span');
+    play.className = 'play';
+    play.textContent = '▶';
+    th.append(img, play);
+
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.textContent = v.player || 'unknown POV';
+
+    b.append(th, who);
+    b.addEventListener('click', () => playVod(v));
+    grid.appendChild(b);
+  }
+}
+
+/* --------------------------------------------------------------- player */
+
+let apiReady = new Promise((r) => { window.onYouTubeIframeAPIReady = r; });
+(function () {
   const s = document.createElement('script');
   s.src = 'https://www.youtube.com/iframe_api';
   document.head.appendChild(s);
 })();
 
-async function mountPlayer(videoId) {
+async function playVod(v) {
+  state.vod = v;
+  $('stage').classList.remove('hidden');
+  $('npWho').textContent = v.player || 'unknown POV';
+  $('npLabel').textContent = state.match.label || '';
+  renderPovs();
+
   await apiReady;
-  $('noPlayer').classList.add('hidden');
-
-  if (state.player) {
-    state.player.loadVideoById(videoId);
-    return;
+  if (state.player) state.player.loadVideoById(v.videoId);
+  else {
+    state.player = new YT.Player('player', {
+      videoId: v.videoId,
+      playerVars: { rel: 0, modestbranding: 1 },
+      events: { onReady: () => { state.ready = true; tick(); } },
+    });
   }
-  state.player = new YT.Player('player', {
-    videoId,
-    playerVars: { rel: 0, modestbranding: 1 },
-    events: {
-      onReady: () => {
-        state.ready = true;
-        tickTime();
-      },
-    },
-  });
+  loadComments();
 }
 
-function currentTime() {
-  return state.ready && state.player ? state.player.getCurrentTime() || 0 : 0;
+const now = () => (state.ready && state.player ? state.player.getCurrentTime() || 0 : 0);
+
+function tick() {
+  if (state.vod) $('atTime').textContent = fmt(now());
+  requestAnimationFrame(tick);
 }
 
-// The comment bar shows the position a new comment would land at, so posting
-// never involves guessing where "here" is.
-function tickTime() {
-  if (state.current) $('atTime').textContent = fmt(currentTime());
-  requestAnimationFrame(tickTime);
-}
-
-function seekTo(secs) {
-  if (state.player && state.ready) {
-    state.player.seekTo(secs, true);
-    state.player.playVideo();
-  }
-}
-
-/* ----------------------------------------------------------------- VODs */
-
-async function loadVideos() {
-  const { videos } = await api('/api/youtube');
-  state.videos = videos;
-  renderList();
-}
-
-function renderList() {
-  const ul = $('vodList');
-  ul.innerHTML = '';
-  $('empty').classList.toggle('hidden', state.videos.length > 0);
-
-  for (const v of state.videos) {
-    const li = document.createElement('li');
-    li.className = state.current && state.current.id === v.id ? 'active' : '';
-    const lab = document.createElement('span');
-    lab.className = 'lab';
-    lab.textContent = v.label || v.title || v.videoId;
-    const who = document.createElement('span');
-    who.className = 'who';
-    who.textContent = v.player || 'unknown POV';
-    li.append(lab, who);
-    li.addEventListener('click', () => select(v));
-    ul.appendChild(li);
-  }
-}
-
-async function select(v) {
-  state.current = v;
-  renderList();
-  $('nowPlaying').classList.remove('hidden');
-  $('commentBar').classList.remove('hidden');
-  $('npLabel').textContent = v.label || v.title || v.videoId;
-  $('npWho').textContent = v.player ? `— ${v.player}` : '';
-  $('hint').textContent = 'Comments are pinned to the timestamp showing on the left. Click any timestamp to jump there.';
-  await mountPlayer(v.videoId);
-  await loadComments();
+function seek(s) {
+  if (state.player && state.ready) { state.player.seekTo(s, true); state.player.playVideo(); }
 }
 
 /* ------------------------------------------------------------- comments */
 
-// Comments live per video. The server keys them by an arbitrary id, so a VOD's
-// own id serves as its comment thread.
 async function loadComments() {
-  if (!state.current) return;
-  const { comments } = await api(`/api/match/${state.current.id}/comments`);
+  if (!state.vod) return;
+  const { comments } = await api(`/api/match/${state.vod.id}/comments`);
   const ul = $('comments');
   ul.innerHTML = '';
   $('noComments').classList.toggle('hidden', comments.length > 0);
 
   for (const c of comments) {
     const li = document.createElement('li');
-
     const head = document.createElement('div');
     head.className = 'head';
 
@@ -214,26 +316,23 @@ async function loadComments() {
     ts.className = 'ts';
     ts.textContent = fmt(c.atMs / 1000);
     ts.title = 'Jump here';
-    ts.addEventListener('click', () => seekTo(c.atMs / 1000));
+    ts.addEventListener('click', () => seek(c.atMs / 1000));
 
     const who = document.createElement('span');
-    who.className = 'who';
+    who.className = 'muted small';
     who.textContent = c.author;
 
     const rm = document.createElement('button');
     rm.className = 'rm';
     rm.textContent = 'remove';
     rm.addEventListener('click', async () => {
-      await api(`/api/match/${state.current.id}/comments/${c.id}`, { method: 'DELETE' });
+      await api(`/api/match/${state.vod.id}/comments/${c.id}`, { method: 'DELETE' });
       loadComments();
     });
 
     head.append(ts, who, rm);
-
     const txt = document.createElement('div');
-    txt.className = 'txt';
     txt.textContent = c.body;
-
     li.append(head, txt);
     ul.appendChild(li);
   }
@@ -241,71 +340,133 @@ async function loadComments() {
 
 async function postComment() {
   const body = $('body').value.trim();
-  if (!body || !state.current) return;
-  // Sent regardless, but the server overrides it with the verified identity
-  // when signed in — the client is not the authority on who wrote something.
-  const author = state.auth.user ? state.auth.user.name : $('author').value.trim() || 'anonymous';
-  // Capture the time at the moment of posting, not when typing began — you
-  // watch, you see it, you type. Using the earlier position would pin every
-  // comment a few seconds before whatever it is about.
-  const atMs = Math.round(currentTime() * 1000);
-  await api(`/api/match/${state.current.id}/comments`, {
+  if (!body || !state.vod) return;
+  const u = currentUser();
+  const author = state.auth.user ? state.auth.user.name : ($('author').value.trim() || (u && u.name) || 'anonymous');
+  // Timed at the moment of posting: you watch, you see it, you type. Using the
+  // position from when typing started would pin every note early.
+  await api(`/api/match/${state.vod.id}/comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ atMs, author, body }),
+    body: JSON.stringify({ atMs: Math.round(now() * 1000), author, body }),
   });
   $('body').value = '';
   localStorage.setItem('debrief.author', author);
   loadComments();
 }
 
-/* ------------------------------------------------------------------ wiring */
+/* -------------------------------------------------------------- wiring */
 
-$('add').addEventListener('click', async () => {
-  const url = $('url').value.trim();
-  $('addErr').classList.add('hidden');
-  if (!url) return;
+$('newMatch').addEventListener('click', () => {
+  $('fDate').value = new Date().toISOString().slice(0, 10);
+  $('fLabel').value = '';
+  $('fScore').value = '';
+  $('matchErr').classList.add('hidden');
+  $('matchDlg').showModal();
+});
+
+$('saveMatch').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const map = $('fMap').value;
   try {
-    const added = await api('/api/youtube', {
+    await api('/api/scrims', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        url,
-        player: $('who').value.trim(),
-        label: $('label').value.trim(),
+        map,
+        mapSplash: splashFor(map),
+        playedOn: $('fDate').value,
+        kind: $('fKind').value,
+        label: $('fLabel').value,
+        score: $('fScore').value,
       }),
     });
-    $('url').value = '';
-    $('label').value = '';
-    await loadVideos();
-    select(added);
-  } catch (e) {
-    $('addErr').textContent = e.message;
-    $('addErr').classList.remove('hidden');
+    $('matchDlg').close();
+    await loadMatches();
+  } catch (err) {
+    $('matchErr').textContent = err.message;
+    $('matchErr').classList.remove('hidden');
   }
 });
 
-$('post').addEventListener('click', postComment);
-$('body').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') postComment();
+$('addPov').addEventListener('click', () => {
+  $('fUrl').value = '';
+  $('fWho').value = (currentUser() || {}).name || localStorage.getItem('debrief.author') || '';
+  $('povErr').classList.add('hidden');
+  $('povDlg').showModal();
 });
 
-$('del').addEventListener('click', async () => {
-  if (!state.current) return;
-  await api(`/api/youtube/${state.current.id}`, { method: 'DELETE' });
-  state.current = null;
-  $('nowPlaying').classList.add('hidden');
-  $('commentBar').classList.add('hidden');
-  await loadVideos();
+$('savePov').addEventListener('click', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/youtube', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: $('fUrl').value,
+        player: $('fWho').value,
+        matchId: state.match.id,
+        label: state.match.label,
+      }),
+    });
+    $('povDlg').close();
+    await loadMatches();
+    openMatch(state.match.id);
+  } catch (err) {
+    $('povErr').textContent = err.message;
+    $('povErr').classList.remove('hidden');
+  }
 });
+
+$('backToMatches').addEventListener('click', () => {
+  $('viewMatch').classList.add('hidden');
+  $('viewMatches').classList.remove('hidden');
+  state.match = null;
+  state.vod = null;
+  loadMatches();
+});
+
+$('delMatch').addEventListener('click', async () => {
+  if (!state.match) return;
+  await api(`/api/scrims/${state.match.id}`, { method: 'DELETE' });
+  $('backToMatches').click();
+});
+
+$('delVod').addEventListener('click', async () => {
+  if (!state.vod) return;
+  await api(`/api/youtube/${state.vod.id}`, { method: 'DELETE' });
+  const id = state.match.id;
+  await loadMatches();
+  openMatch(id);
+});
+
+$('post').addEventListener('click', postComment);
+$('body').addEventListener('keydown', (e) => { if (e.key === 'Enter') postComment(); });
+
+// Demo sign-in: shows the profile UI without a Google Cloud project. Replaced
+// by the real button the moment GOOGLE_CLIENT_ID is set.
+$('demoSignIn').addEventListener('click', () => {
+  state.demoUser = {
+    name: localStorage.getItem('debrief.author') || 'Baboyie',
+    email: 'you@example.com',
+    role: 'IGL',
+    picture: 'https://api.dicebear.com/7.x/thumbs/svg?seed=debrief',
+    demo: true,
+  };
+  renderAuth();
+});
+
+$('profileBtn').addEventListener('click', () => $('profile').classList.remove('hidden'));
+$('profileClose').addEventListener('click', () => $('profile').classList.add('hidden'));
+$('profile').addEventListener('click', (e) => { if (e.target.id === 'profile') $('profile').classList.add('hidden'); });
 
 $('signout').addEventListener('click', async () => {
-  await api('/api/auth/logout', { method: 'POST' });
-  state.auth.user = null;
+  if (state.auth.user) { await api('/api/auth/logout', { method: 'POST' }); state.auth.user = null; mountRealSignIn(); }
+  state.demoUser = null;
+  $('profile').classList.add('hidden');
   renderAuth();
-  mountSignIn();
 });
 
 $('author').value = localStorage.getItem('debrief.author') || '';
 loadAuth();
-loadVideos();
+loadMaps().then(loadMatches);

@@ -211,6 +211,37 @@ app.get('/api/vod/:id/video', async (req, res) => {
   fs.createReadStream(file, { start, end }).pipe(res);
 });
 
+/* -------------------------------------------------------------- matches */
+
+// Matches with their POVs attached, which is how the browser wants them: one
+// request per page rather than a match list plus a VOD list to join by hand.
+app.get('/api/scrims', async (_req, res) => {
+  const [matches, videos] = await Promise.all([
+    vods.readMatches(DATA_DIR),
+    vods.readYouTube(DATA_DIR),
+  ]);
+  res.json({
+    matches: matches.map((m) => ({
+      ...m,
+      vods: videos.filter((v) => v.matchId === m.id),
+    })),
+    // POVs nobody has filed against a match yet.
+    unfiled: videos.filter((v) => !v.matchId),
+  });
+});
+
+app.post('/api/scrims', auth.requireAuth, async (req, res) => {
+  try {
+    res.json(await vods.saveMatch(DATA_DIR, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/scrims/:id', auth.requireAuth, async (req, res) => {
+  res.json({ removed: await vods.deleteMatch(DATA_DIR, req.params.id) });
+});
+
 /* --------------------------------------------------------- youtube VODs */
 
 app.get('/api/youtube', async (_req, res) => {

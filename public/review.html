@@ -8,73 +8,157 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="dot"></span><h1>DEBRIEF</h1><span class="sub">VOD review</span></div>
+    <div class="brand">
+      <span class="dot"></span><h1>DEBRIEF</h1>
+      <span class="sub">VOD review</span>
+    </div>
     <nav>
       <a href="index.html">Match analyzer</a>
       <a href="planner.html">Planner</a>
-      <span id="authArea" class="autharea">
+      <span class="autharea">
         <span id="signinSlot"></span>
-        <span id="whoami" class="whoami hidden">
+        <button id="demoSignIn" class="link demo">Sign in</button>
+        <button id="profileBtn" class="profilebtn hidden">
           <img id="avatar" class="avatar" alt="" />
           <span id="myname"></span>
-          <button id="signout" class="link">Sign out</button>
-        </span>
+        </button>
       </span>
     </nav>
   </header>
 
-  <main class="layout">
-    <aside class="rail">
-      <section class="add">
-        <h2>Add a VOD</h2>
-        <input id="url" type="url" placeholder="Paste a YouTube link" autocomplete="off" />
-        <div class="two">
-          <input id="who" type="text" placeholder="Whose POV" autocomplete="off" />
-          <input id="label" type="text" placeholder="Ascent, 13–11" autocomplete="off" />
-        </div>
-        <button id="add" class="primary">Add</button>
-        <p id="addErr" class="err hidden"></p>
-      </section>
-
-      <section class="list">
-        <h2>VODs</h2>
-        <ul id="vodList"></ul>
-        <p id="empty" class="muted small">Nothing yet. Paste a YouTube link above.</p>
-      </section>
-    </aside>
-
-    <section class="stage">
-      <div id="playerWrap" class="playerwrap">
-        <div id="player"></div>
-        <div id="noPlayer" class="noplayer">
-          <p>Pick a VOD to start reviewing.</p>
-        </div>
-      </div>
-
-      <div id="nowPlaying" class="nowplaying hidden">
+  <!-- Profile drawer. Demo-only until sign-in is configured for real. -->
+  <div id="profile" class="profile hidden">
+    <div class="profile-card">
+      <button id="profileClose" class="x" aria-label="Close">×</button>
+      <div class="profile-head">
+        <img id="pAvatar" class="pavatar" alt="" />
         <div>
-          <strong id="npLabel"></strong>
-          <span id="npWho" class="muted"></span>
+          <strong id="pName"></strong>
+          <div id="pEmail" class="muted small"></div>
+          <span id="pRole" class="pill"></span>
         </div>
-        <button id="del" class="ghost" title="Remove this VOD from the list">Remove</button>
+      </div>
+      <dl class="stats">
+        <dt>VODs uploaded</dt><dd id="pVods">—</dd>
+        <dt>Comments written</dt><dd id="pComments">—</dd>
+        <dt>Scrims reviewed</dt><dd id="pScrims">—</dd>
+      </dl>
+      <p id="pDemoNote" class="demo-note hidden"></p>
+      <button id="signout" class="ghost wide">Sign out</button>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------ view 1: match grid -->
+  <main id="viewMatches" class="wrap">
+    <div class="rowhead">
+      <h2>Scrims &amp; matches</h2>
+      <button id="newMatch" class="primary">New match</button>
+    </div>
+
+    <div id="matchGrid" class="grid"></div>
+    <p id="noMatches" class="muted empty">No matches yet. Add one to start filing VODs against it.</p>
+
+    <section id="unfiledWrap" class="panel hidden">
+      <h2>Unfiled VODs</h2>
+      <p class="muted small">Added but not attached to a match yet.</p>
+      <ul id="unfiled" class="unfiled"></ul>
+    </section>
+  </main>
+
+  <!-- --------------------------------------------- view 2: one match -->
+  <main id="viewMatch" class="wrap hidden">
+    <button id="backToMatches" class="back">← All matches</button>
+
+    <div class="matchhead">
+      <img id="mHero" class="hero" alt="" />
+      <div class="matchmeta">
+        <span id="mKind" class="pill"></span>
+        <h2 id="mTitle"></h2>
+        <div id="mSub" class="muted"></div>
+      </div>
+      <button id="delMatch" class="ghost">Delete match</button>
+    </div>
+
+    <div class="rowhead">
+      <h2>Teammate POVs</h2>
+      <button id="addPov" class="primary">Add a POV</button>
+    </div>
+    <div id="povGrid" class="povs"></div>
+    <p id="noPovs" class="muted empty">No POVs on this match yet.</p>
+
+    <!-- Player appears under the POV row once one is picked, so the other
+         POVs stay visible and switching is one click. -->
+    <section id="stage" class="stage hidden">
+      <div class="playerwrap"><div id="player"></div></div>
+
+      <div class="stagebar">
+        <div>
+          <strong id="npWho"></strong>
+          <span id="npLabel" class="muted small"></span>
+        </div>
+        <button id="delVod" class="ghost">Remove POV</button>
       </div>
 
-      <div id="commentBar" class="commentbar hidden">
+      <div class="commentbar">
         <span id="atTime" class="at">0:00</span>
         <input id="author" class="author" type="text" placeholder="You" autocomplete="off" />
-        <span id="authorFixed" class="author fixed hidden" title="From your Google account"></span>
+        <span id="authorFixed" class="author fixed hidden"></span>
         <input id="body" class="body" type="text" placeholder="Comment at this timestamp — Enter to post" autocomplete="off" />
         <button id="post" class="primary">Post</button>
       </div>
-      <p class="muted small hint" id="hint"></p>
-    </section>
 
-    <aside class="notes">
-      <h2>Comments</h2>
-      <ul id="comments"></ul>
-      <p id="noComments" class="muted small">No comments on this VOD yet.</p>
-    </aside>
+      <ul id="comments" class="notes"></ul>
+      <p id="noComments" class="muted small">No comments on this POV yet.</p>
+    </section>
   </main>
+
+  <!-- ------------------------------------------------------- dialogs -->
+  <dialog id="matchDlg" class="dlg">
+    <form method="dialog">
+      <h3>New match</h3>
+      <label>Map</label>
+      <select id="fMap"></select>
+      <div class="two">
+        <div>
+          <label>Date</label>
+          <input id="fDate" type="date" />
+        </div>
+        <div>
+          <label>Type</label>
+          <select id="fKind">
+            <option value="scrim">Scrim</option>
+            <option value="ranked">Ranked</option>
+            <option value="tournament">Tournament</option>
+            <option value="vod">VOD study</option>
+          </select>
+        </div>
+      </div>
+      <label>Label <span class="muted small">— several scrims a day need telling apart</span></label>
+      <input id="fLabel" type="text" placeholder="vs Nova — map 2" />
+      <label>Score</label>
+      <input id="fScore" type="text" placeholder="13–11" />
+      <p id="matchErr" class="err hidden"></p>
+      <menu>
+        <button value="cancel" class="ghost">Cancel</button>
+        <button id="saveMatch" value="save" class="primary">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="povDlg" class="dlg">
+    <form method="dialog">
+      <h3>Add a POV</h3>
+      <label>YouTube link</label>
+      <input id="fUrl" type="url" placeholder="https://youtu.be/…" />
+      <label>Whose POV</label>
+      <input id="fWho" type="text" placeholder="Baboyie#EUW" />
+      <p id="povErr" class="err hidden"></p>
+      <menu>
+        <button value="cancel" class="ghost">Cancel</button>
+        <button id="savePov" value="save" class="primary">Add</button>
+      </menu>
+    </form>
+  </dialog>
 
   <script src="review.js"></script>
 </body>

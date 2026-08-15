@@ -172,6 +172,75 @@ async function deleteComment(baseDir, matchId, commentId) {
   return list.length !== next.length;
 }
 
+/* -------------------------------------------------------------- matches */
+
+// A match is what a team actually reviews: one map, one date, one scrim block.
+// Recordings hang off it, one per player.
+//
+// Created explicitly rather than inferred. `groupIntoMatches` below can derive
+// matches from overlapping wall-clock time and does it well, but a team running
+// three scrims in an evening wants to *name* them — "scrim vs Nova, map 2" —
+// and no amount of timestamp arithmetic produces that.
+
+function matchesPath(baseDir) {
+  return path.join(vodRoot(baseDir), 'matches.json');
+}
+
+async function readMatches(baseDir) {
+  try {
+    return JSON.parse(await fsp.readFile(matchesPath(baseDir), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+async function writeMatches(baseDir, list) {
+  await fsp.mkdir(vodRoot(baseDir), { recursive: true });
+  await fsp.writeFile(matchesPath(baseDir), JSON.stringify(list, null, 2));
+}
+
+async function saveMatch(baseDir, input) {
+  const list = await readMatches(baseDir);
+  const existing = input.id ? list.find((m) => m.id === input.id) : null;
+
+  const record = {
+    id: existing ? existing.id : newId(),
+    map: String(input.map || '').slice(0, 40),
+    // Splash art is passed in by the client, which already fetched the map list
+    // from valorant-api for the picker. Storing the URL means the card renders
+    // without every page load re-fetching the whole map catalogue.
+    mapSplash: String(input.mapSplash || '').slice(0, 400),
+    // ISO date (YYYY-MM-DD). Several scrims a day share one, which is exactly
+    // why `label` exists alongside it.
+    playedOn: String(input.playedOn || '').slice(0, 10),
+    kind: ['scrim', 'ranked', 'tournament', 'vod'].includes(input.kind) ? input.kind : 'scrim',
+    label: String(input.label || '').slice(0, 120),
+    score: String(input.score || '').slice(0, 20),
+    createdUtc: existing ? existing.createdUtc : new Date().toISOString(),
+  };
+
+  const next = existing ? list.map((m) => (m.id === record.id ? record : m)) : [record, ...list];
+  // Newest first, and within a day the most recently added first — which is the
+  // order a team reviews an evening's scrims in.
+  next.sort((a, b) => (b.playedOn || '').localeCompare(a.playedOn || '') || b.createdUtc.localeCompare(a.createdUtc));
+  await writeMatches(baseDir, next);
+  return record;
+}
+
+async function deleteMatch(baseDir, id) {
+  const list = await readMatches(baseDir);
+  const next = list.filter((m) => m.id !== id);
+  await writeMatches(baseDir, next);
+
+  // Detach its VODs rather than deleting them. Someone who removes a match by
+  // accident should not lose everyone's uploads with it.
+  const vids = await readYouTube(baseDir);
+  const relinked = vids.map((v) => (v.matchId === id ? { ...v, matchId: null } : v));
+  await fsp.writeFile(youtubeIndexPath(baseDir), JSON.stringify(relinked, null, 2));
+
+  return list.length !== next.length;
+}
+
 /* --------------------------------------------------------- youtube VODs */
 
 // A registered YouTube video: the team uploads wherever they like and hands us
@@ -231,8 +300,12 @@ async function addYouTube(baseDir, entry) {
     videoId,
     title: String(entry.title || '').slice(0, 200),
     player: String(entry.player || '').slice(0, 64),
-    // Free text: "Ascent, 13-11" is more use to a team than a match id they
-    // would have to look up.
+    // Which match this POV belongs to. Null is allowed — a VOD that has not
+    // been filed yet is still worth keeping, and forcing a match on upload
+    // would make adding a link a two-step chore.
+    matchId: safeId(entry.matchId) || entry.matchId ? String(entry.matchId).slice(0, 64) : null,
+    // Free text, kept for VODs with no match: "Ascent, 13-11" is more use than
+    // an id someone would have to look up.
     label: String(entry.label || '').slice(0, 200),
     addedUtc: existing ? existing.addedUtc : new Date().toISOString(),
     source: 'youtube',
@@ -253,6 +326,9 @@ async function removeYouTube(baseDir, id) {
 }
 
 module.exports = {
+  readMatches,
+  saveMatch,
+  deleteMatch,
   parseYouTubeId,
   readYouTube,
   addYouTube,
