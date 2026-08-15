@@ -88,9 +88,11 @@ function renderAuth() {
   // With verified identity the author field is not editable: a free-text name
   // is worth nothing in an argument about who said what.
   const verified = !!state.auth.user;
-  $('author').classList.toggle('hidden', verified);
-  $('authorFixed').classList.toggle('hidden', !verified);
-  if (verified) $('authorFixed').textContent = state.auth.user.name;
+  for (const [free, fixed] of [['author', 'authorFixed'], ['noteAuthor', 'noteAuthorFixed']]) {
+    $(free).classList.toggle('hidden', verified);
+    $(fixed).classList.toggle('hidden', !verified);
+    if (verified) $(fixed).textContent = state.auth.user.name;
+  }
 }
 
 function mountRealSignIn() {
@@ -226,6 +228,7 @@ function openMatch(id) {
   $('mSub').textContent = [m.map, prettyDate(m.playedOn), m.score].filter(Boolean).join(' · ');
 
   renderPovs();
+  loadNotes();
   loadShots();
 }
 
@@ -257,6 +260,97 @@ function renderPovs() {
     b.append(th, who);
     b.addEventListener('click', () => playVod(v));
     grid.appendChild(b);
+  }
+}
+
+/* ---------------------------------------------------------- team notes */
+
+/** "just now", "14m ago", "3d ago" — a discussion reads better in relative time. */
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+/** Distinct colour per author, so a thread is scannable without reading names. */
+function hueFor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return h;
+}
+
+async function loadNotes() {
+  if (!state.match) return;
+  const { notes } = await api(`/api/scrims/${state.match.id}/notes`);
+  const ul = $('noteList');
+  ul.innerHTML = '';
+  $('noNotes').classList.toggle('hidden', notes.length > 0);
+  $('noteCount').textContent = notes.length
+    ? `${notes.length} take${notes.length === 1 ? '' : 's'} from ${new Set(notes.map((n) => n.author)).size} player${new Set(notes.map((n) => n.author)).size === 1 ? '' : 's'}`
+    : '';
+
+  for (const n of notes) {
+    const li = document.createElement('li');
+
+    const av = document.createElement('span');
+    av.className = 'noteav';
+    av.style.background = `hsl(${hueFor(n.author)} 45% 26%)`;
+    av.style.color = `hsl(${hueFor(n.author)} 70% 72%)`;
+    av.textContent = (n.author || '?').trim().charAt(0).toUpperCase();
+
+    const main = document.createElement('div');
+    main.className = 'notemain';
+
+    const head = document.createElement('div');
+    head.className = 'head';
+    const who = document.createElement('strong');
+    who.textContent = n.author;
+    const when = document.createElement('span');
+    when.className = 'muted small';
+    when.textContent = ago(n.createdUtc);
+    when.title = new Date(n.createdUtc).toLocaleString();
+    const rm = document.createElement('button');
+    rm.className = 'rm';
+    rm.textContent = 'remove';
+    rm.addEventListener('click', async () => {
+      await api(`/api/scrims/${state.match.id}/notes/${n.id}`, { method: 'DELETE' });
+      loadNotes();
+    });
+    head.append(who, when, rm);
+
+    const body = document.createElement('div');
+    body.className = 'notebody';
+    body.textContent = n.body;
+
+    main.append(head, body);
+    li.append(av, main);
+    ul.appendChild(li);
+  }
+}
+
+async function postNote() {
+  const body = $('noteBody').value.trim();
+  if (!body || !state.match) return;
+  const u = currentUser();
+  const author = state.auth.user
+    ? state.auth.user.name
+    : ($('noteAuthor').value.trim() || (u && u.name) || 'anonymous');
+  $('noteErr').classList.add('hidden');
+  try {
+    await api(`/api/scrims/${state.match.id}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ author, body }),
+    });
+    $('noteBody').value = '';
+    localStorage.setItem('debrief.author', author);
+    loadNotes();
+  } catch (e) {
+    $('noteErr').textContent = e.message;
+    $('noteErr').classList.remove('hidden');
   }
 }
 
@@ -532,6 +626,13 @@ $('demoSignIn').addEventListener('click', () => {
     demo: true,
   };
   renderAuth();
+});
+
+$('postNote').addEventListener('click', postNote);
+// Enter posts, Shift+Enter makes a new line — a match take is often a
+// paragraph, so the textarea has to allow one.
+$('noteBody').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); postNote(); }
 });
 
 $('shotFile').addEventListener('change', (e) => {

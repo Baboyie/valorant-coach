@@ -79,6 +79,28 @@
       <button id="delMatch" class="ghost">Delete match</button>
     </div>
 
+    <!-- Directly under the header: opening a match should show what the team
+         thought of it before anything else. -->
+    <section class="notes-panel">
+      <div class="rowhead tight">
+        <h2>Team review</h2>
+        <span id="noteCount" class="muted small"></span>
+      </div>
+
+      <ul id="noteList" class="notelist"></ul>
+      <p id="noNotes" class="muted small">
+        No one has written their take on this match yet.
+      </p>
+
+      <div class="notewrite">
+        <input id="noteAuthor" class="author" type="text" placeholder="You" autocomplete="off" />
+        <span id="noteAuthorFixed" class="author fixed hidden"></span>
+        <textarea id="noteBody" rows="2" placeholder="How did we play? What should change next time?"></textarea>
+        <button id="postNote" class="primary">Post</button>
+      </div>
+      <p id="noteErr" class="err hidden"></p>
+    </section>
+
     <div class="rowhead">
       <h2>Scoreboard</h2>
       <span class="muted small">Paste a screenshot anywhere on this page, or</span>

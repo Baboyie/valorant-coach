@@ -241,6 +241,55 @@ async function deleteMatch(baseDir, id) {
   return list.length !== next.length;
 }
 
+/* ------------------------------------------------------- match notes */
+
+// Everyone's take on the match as a whole — "we were too slow to rotate", "our
+// eco rounds were free" — as opposed to the timestamped comments, which pin to
+// one moment in one person's POV.
+//
+// Kept in a separate store rather than reusing the comment thread with a zero
+// timestamp. They are different things: a comment answers "what happened here",
+// a note answers "how did we play". Conflating them would put an `atMs` on
+// every opinion that means nothing, and mix a scrolling discussion into a
+// timeline that is meant to be seekable.
+
+function notesPath(baseDir, matchId) {
+  return path.join(vodRoot(baseDir), `notes-${matchId}.json`);
+}
+
+async function readNotes(baseDir, matchId) {
+  if (!safeId(matchId)) return [];
+  try {
+    return JSON.parse(await fsp.readFile(notesPath(baseDir, matchId), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+async function addNote(baseDir, matchId, note) {
+  if (!safeId(matchId)) throw new Error('Bad match id.');
+  const list = await readNotes(baseDir, matchId);
+  const entry = {
+    id: newId(),
+    author: String(note.author || 'anonymous').slice(0, 64),
+    body: String(note.body || '').slice(0, 4000),
+    createdUtc: new Date().toISOString(),
+  };
+  if (!entry.body.trim()) throw new Error('empty note');
+  // Oldest first: a discussion reads top to bottom, unlike a list of matches.
+  list.push(entry);
+  await fsp.mkdir(vodRoot(baseDir), { recursive: true });
+  await fsp.writeFile(notesPath(baseDir, matchId), JSON.stringify(list, null, 2));
+  return entry;
+}
+
+async function deleteNote(baseDir, matchId, noteId) {
+  const list = await readNotes(baseDir, matchId);
+  const next = list.filter((n) => n.id !== noteId);
+  await fsp.writeFile(notesPath(baseDir, matchId), JSON.stringify(next, null, 2));
+  return list.length !== next.length;
+}
+
 /* ---------------------------------------------------- match screenshots */
 
 // Scoreboards, round timelines, economy tabs — the still images a team argues
@@ -408,6 +457,9 @@ module.exports = {
   readMatches,
   saveMatch,
   deleteMatch,
+  readNotes,
+  addNote,
+  deleteNote,
   readShots,
   addShot,
   shotFile,

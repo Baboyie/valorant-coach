@@ -242,6 +242,26 @@ app.delete('/api/scrims/:id', auth.requireAuth, async (req, res) => {
   res.json({ removed: await vods.deleteMatch(DATA_DIR, req.params.id) });
 });
 
+/* --------------------------------------------------------- match notes */
+
+app.get('/api/scrims/:id/notes', async (req, res) => {
+  res.json({ notes: await vods.readNotes(DATA_DIR, req.params.id) });
+});
+
+app.post('/api/scrims/:id/notes', auth.requireAuth, async (req, res) => {
+  try {
+    const body = { ...(req.body || {}) };
+    if (req.user) body.author = req.user.name;
+    res.json(await vods.addNote(DATA_DIR, req.params.id, body));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/scrims/:id/notes/:noteId', auth.requireAuth, async (req, res) => {
+  res.json({ removed: await vods.deleteNote(DATA_DIR, req.params.id, req.params.noteId) });
+});
+
 /* --------------------------------------------------- match screenshots */
 
 app.get('/api/scrims/:id/shots', async (req, res) => {

@@ -142,6 +142,42 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.11em; color: 
   color: #fff; font-size: 26px; text-shadow: 0 2px 12px rgba(0,0,0,0.7); opacity: 0.85;
 }
 
+/* ---------------------------------------------------------- team notes */
+
+.notes-panel {
+  margin-top: 16px; padding: 16px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px;
+}
+.rowhead.tight { margin: 0 0 12px; }
+
+.notelist { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.notelist li { display: flex; gap: 11px; }
+.noteav {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 13px; font-weight: 600;
+}
+.notemain { flex: 1; min-width: 0; }
+.notemain .head { display: flex; align-items: baseline; gap: 9px; }
+.notemain .head strong { font-size: 13.5px; }
+.notemain .rm {
+  margin-left: auto; background: none; border: 0; color: transparent;
+  cursor: pointer; font-size: 12px; padding: 0;
+}
+/* Remove stays out of the way until you are actually on the note. */
+.notelist li:hover .rm { color: var(--muted); }
+.notemain .rm:hover { color: var(--rec); }
+.notebody { font-size: 13.5px; white-space: pre-wrap; word-break: break-word; margin-top: 1px; }
+
+.notewrite { display: flex; gap: 8px; align-items: flex-start; }
+.notewrite .author { flex: 0 0 120px; margin: 0; }
+.notewrite textarea {
+  flex: 1; resize: vertical; min-height: 40px; padding: 8px 10px;
+  background: #080a11; color: var(--text); border: 1px solid var(--line);
+  border-radius: 7px; font: inherit;
+}
+.notewrite textarea:focus { outline: none; border-color: var(--accent); }
+.notewrite button { flex: none; }
+
 /* ---------------------------------------------------------- scoreboards */
 
 .shots { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
