@@ -129,8 +129,49 @@ struct AudioSide {
     cap: recorder_core::audio::AudioCapture,
     rx: Receiver<recorder_core::audio::AudioChunk>,
     /// Only the replay path has its own encoder; on the file path audio rides
-    /// the video writer as a second stream.
+    /// the video writer as an extra stream.
     enc: Option<encoder::AudioEncoder>,
+    track: replay::AudioTrack,
+}
+
+/// Start the audio sources the config asks for, as separate tracks (§23).
+///
+/// Each source is independent: a machine with no microphone still records
+/// desktop audio, and a failure on either never costs the recording.
+fn start_audio_sources(
+    config: &Config,
+    ring: Option<&Arc<replay::ReplayRing>>,
+) -> Vec<AudioSide> {
+    use recorder_core::audio::{AudioCapture, AudioSource};
+
+    let mut wanted = Vec::new();
+    if config.capture_audio {
+        wanted.push((AudioSource::Loopback, replay::AudioTrack::Desktop));
+    }
+    if config.capture_mic {
+        wanted.push((AudioSource::Microphone, replay::AudioTrack::Mic));
+    }
+
+    let mut out = Vec::new();
+    for (src, track) in wanted {
+        match AudioCapture::start(src) {
+            Ok((cap, rx)) => {
+                let enc = match ring {
+                    Some(r) => match encoder::AudioEncoder::to_replay(track, &cap.format, Arc::clone(r)) {
+                        Ok(ae) => Some(ae),
+                        Err(e) => {
+                            eprintln!("{} encoder unavailable: {e}", src.label());
+                            continue;
+                        }
+                    },
+                    None => None,
+                };
+                out.push(AudioSide { cap, rx, enc, track });
+            }
+            Err(e) => eprintln!("{} unavailable, continuing without it: {e}", src.label()),
+        }
+    }
+    out
 }
 
 enum Session {
@@ -141,7 +182,7 @@ enum Session {
         enc: encoder::Encoder,
         ring: Arc<replay::ReplayRing>,
         cfg: encoder::EncoderConfig,
-        audio: Option<AudioSide>,
+        audio: Vec<AudioSide>,
         /// Video's first timestamp — both streams rebase against it so sound
         /// and picture share an origin.
         video_base: Option<i64>,
@@ -152,7 +193,7 @@ enum Session {
         enc: encoder::Encoder,
         path: PathBuf,
         started: Instant,
-        audio: Option<AudioSide>,
+        audio: Vec<AudioSide>,
     },
 }
 
@@ -273,11 +314,17 @@ fn handle_cmd(cmd: Cmd, session: &mut Session, config: &mut Config, status: &Arc
                 // The AAC type Media Foundation negotiated, which the MP4 sink
                 // needs to write the codec config. Absent when audio is off,
                 // in which case the clip is silent rather than failing.
-                let audio_type = audio
-                    .as_ref()
-                    .and_then(|a| a.enc.as_ref())
-                    .and_then(|ae| ae.negotiated_type.clone());
-                match ring.save_mp4(&path.to_string_lossy(), cfg, audio_type.as_ref()) {
+                let audio_types: Vec<(replay::AudioTrack, windows::Win32::Media::MediaFoundation::IMFMediaType)> =
+                    audio
+                        .iter()
+                        .filter_map(|a| {
+                            a.enc
+                                .as_ref()
+                                .and_then(|ae| ae.negotiated_type.clone())
+                                .map(|ty| (a.track, ty))
+                        })
+                        .collect();
+                match ring.save_mp4(&path.to_string_lossy(), cfg, &audio_types) {
                     Ok(r) => {
                         let mut s = status.lock().unwrap();
                         s.last_clip = Some(path.to_string_lossy().to_string());
@@ -374,23 +421,7 @@ fn start_buffering(
     // one stream, so it cannot ride the video writer the way it does on the
     // file path. Losing sound must never lose the recording, so every failure
     // below degrades to video-only rather than propagating.
-    let audio = if config.capture_audio {
-        match recorder_core::audio::AudioCapture::start() {
-            Ok((c, rx)) => match encoder::AudioEncoder::to_replay(&c.format, Arc::clone(&ring)) {
-                Ok(ae) => Some(AudioSide { cap: c, rx, enc: Some(ae) }),
-                Err(e) => {
-                    eprintln!("audio encoder unavailable, buffering video only: {e}");
-                    None
-                }
-            },
-            Err(e) => {
-                eprintln!("audio unavailable, buffering video only: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let audio = start_audio_sources(config, Some(&ring));
 
     cap.start()?;
     Ok((
@@ -416,26 +447,11 @@ fn start_recording(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> w
         let _ = std::fs::create_dir_all(dir);
     }
 
-    let audio = if config.capture_audio {
-        match recorder_core::audio::AudioCapture::start() {
-            Ok((c, rx)) => Some(AudioSide { cap: c, rx, enc: None }),
-            Err(e) => {
-                eprintln!("audio unavailable, recording video only: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // On the file path audio is a second stream on the same writer, so the
-    // encoder needs the format up front.
-    let enc = encoder::Encoder::to_file(
-        &dev,
-        &path.to_string_lossy(),
-        &cfg,
-        audio.as_ref().map(|a| &a.cap.format),
-    )?;
+    // No ring on this path: audio rides the video writer as extra streams.
+    let audio = start_audio_sources(config, None);
+    let fmts: Vec<recorder_core::audio::AudioFormat> =
+        audio.iter().map(|a| a.cap.format).collect();
+    let enc = encoder::Encoder::to_file(&dev, &path.to_string_lossy(), &cfg, &fmts)?;
     cap.start()?;
     Ok(Session::Recording { cap, frames, enc, path, started: Instant::now(), audio })
 }
@@ -474,7 +490,7 @@ fn pump(session: &mut Session, status: &Arc<Mutex<Status>>) -> bool {
             }
             // Audio only once video has a base; packets before the first frame
             // have no timeline to sit on and are dropped by the encoder.
-            if let Some(a) = audio {
+            for a in audio.iter_mut() {
                 if let Some(ae) = &mut a.enc {
                     while let Ok(chunk) = a.rx.try_recv() {
                         let _ = ae.write(&chunk.pcm, chunk.ts_100ns, *video_base);
@@ -500,9 +516,9 @@ fn pump(session: &mut Session, status: &Arc<Mutex<Status>>) -> bool {
                     Err(_) => break,
                 }
             }
-            if let Some(a) = audio {
+            for (i, a) in audio.iter().enumerate() {
                 while let Ok(chunk) = a.rx.try_recv() {
-                    if let Err(e) = enc.write_audio(&chunk.pcm, chunk.ts_100ns) {
+                    if let Err(e) = enc.write_audio(i, &chunk.pcm, chunk.ts_100ns) {
                         set_error(status, &format!("audio encode failed: {e}"));
                     }
                 }
@@ -520,22 +536,24 @@ fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>) {
             let _ = cap.stop();
             drain(&frames, &mut enc);
             let _ = enc.finish();
-            if let Some(mut a) = audio {
+            for mut a in audio {
                 a.cap.stop();
                 if let Some(ae) = a.enc.take() {
                     let _ = ae.finish();
                 }
             }
         }
-        Session::Recording { cap, frames, mut enc, path, audio, .. } => {
+        Session::Recording { cap, frames, mut enc, path, mut audio, .. } => {
             let _ = cap.stop();
             drain(&frames, &mut enc);
             // Stop audio before the final drain, or the loop chases a stream
             // that is still being fed and never ends.
-            if let Some(mut a) = audio {
+            for a in audio.iter_mut() {
                 a.cap.stop();
+            }
+            for (i, a) in audio.iter().enumerate() {
                 while let Ok(chunk) = a.rx.try_recv() {
-                    let _ = enc.write_audio(&chunk.pcm, chunk.ts_100ns);
+                    let _ = enc.write_audio(i, &chunk.pcm, chunk.ts_100ns);
                 }
             }
             // finish() writes the moov atom; skipping it leaves a file that

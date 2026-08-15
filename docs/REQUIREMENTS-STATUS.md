@@ -53,7 +53,7 @@ not assertions.
 | 15 | Storage estimation | **Not started** | Bitrate is known, so this is arithmetic and UI, not research. |
 | 16 | Lightweight game detection | **Done** | Window-class lookup every 2 s, **only while idle**. Never enumerates the process table, never reads the game's memory. |
 | 22 | H.264 / HEVC / AV1 | **Partial** | H.264 used throughout, per the requirement's own compatibility-first ordering. HEVC is detected but not selectable. AV1 is impossible on Turing — measured, not assumed. |
-| 23 | Audio: game, mic, separate tracks | **Partial** | Desktop loopback (game + comms as heard) done, verified exact. **Microphone not captured** — the player's own voice is missing. Separate tracks not implemented. |
+| 23 | Audio: game, mic, separate tracks | **Done** | Desktop loopback and microphone, each verified against injected signal, muxed as **separate AAC tracks** on both the file and replay paths. Separate rather than mixed is also the lighter option — the two devices often run at different sample rates, so mixing would need resampling. Discord as a distinct third source is not built; it arrives inside the desktop mix. |
 | 25 | Feel invisible | **Done** | Tray app, close-to-tray, auto-start on game detection, hotkey save. |
 | 26 | Don't overload the desktop client | **Done** | No charts, no AI, no database, no animation. Plain HTML with a 2 Hz status poll. |
 | 27 | Web/desktop split | **Partial** | Desktop side matches the split exactly. The web strand (`server.js`, `planner.html`) exists but has not been assessed this cycle. |

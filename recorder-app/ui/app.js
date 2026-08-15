@@ -11,6 +11,8 @@ async function loadConfig() {
   el("bitrate").value = cfg.bitrate_mbps;
   el("hotkey").value = cfg.save_hotkey;
   el("outdir").value = cfg.output_dir;
+  el("capaudio").checked = cfg.capture_audio;
+  el("capmic").checked = cfg.capture_mic;
   el("hotkeyhint").textContent = `Press ${cfg.save_hotkey} in game to save the last ${cfg.window_secs}s.`;
 }
 
@@ -103,6 +105,8 @@ el("save").addEventListener("click", async () => {
     bitrate_mbps: parseInt(el("bitrate").value, 10),
     save_hotkey: el("hotkey").value,
     output_dir: el("outdir").value,
+    capture_audio: el("capaudio").checked,
+    capture_mic: el("capmic").checked,
   };
   try {
     await invoke("set_config", { newConfig: next });

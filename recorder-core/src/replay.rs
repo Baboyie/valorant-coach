@@ -50,6 +50,13 @@ struct Inner {
     non_monotonic: u64,
 }
 
+/// One audio packet lifted out of a ring for muxing: (bytes, timestamp,
+/// duration).
+type AudioPacket = (Vec<u8>, i64, i64);
+
+/// A muxable audio track: its stream index in the writer, and its packets.
+type MuxTrack = (u32, Vec<AudioPacket>);
+
 struct EncodedAudio {
     bytes: Vec<u8>,
     ts_100ns: i64,
@@ -62,12 +69,38 @@ struct AudioInner {
     bytes: usize,
 }
 
+/// Which audio track a packet belongs to.
+///
+/// Indexed rather than named fields so a third — §23 mentions Discord — is an
+/// extra variant rather than another parallel set of members.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioTrack {
+    Desktop,
+    Mic,
+}
+
+impl AudioTrack {
+    pub const ALL: [AudioTrack; 2] = [AudioTrack::Desktop, AudioTrack::Mic];
+    fn index(self) -> usize {
+        match self {
+            AudioTrack::Desktop => 0,
+            AudioTrack::Mic => 1,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            AudioTrack::Desktop => "desktop",
+            AudioTrack::Mic => "mic",
+        }
+    }
+}
+
 pub struct ReplayRing {
     inner: Mutex<Inner>,
-    /// Separate lock from video on purpose: the two grabber callbacks run on
-    /// different Media Foundation worker threads, and sharing one lock would
-    /// make the audio thread wait behind a video push for no reason.
-    audio: Mutex<AudioInner>,
+    /// One lock per track, and none of them the video lock: every grabber
+    /// callback runs on its own Media Foundation worker thread, and a shared
+    /// lock would make them queue behind each other for no reason.
+    audio: [Mutex<AudioInner>; 2],
     window_100ns: i64,
     /// Retained beyond the window so that a keyframe exists at or before the
     /// window start — a clip must begin on an IDR or its first GOP is garbage.
@@ -93,6 +126,7 @@ pub struct RingReport {
 pub struct SaveReport {
     pub frames: usize,
     pub audio_packets: usize,
+    pub audio_tracks: usize,
     pub bytes: usize,
     pub span_secs: f64,
     pub elapsed_ms: f64,
@@ -115,10 +149,12 @@ impl ReplayRing {
                 reuses: 0,
                 non_monotonic: 0,
             }),
-            audio: Mutex::new(AudioInner {
-                packets: VecDeque::new(),
-                pool: Vec::new(),
-                bytes: 0,
+            audio: std::array::from_fn(|_| {
+                Mutex::new(AudioInner {
+                    packets: VecDeque::new(),
+                    pool: Vec::new(),
+                    bytes: 0,
+                })
             }),
             window_100ns: (window_secs as i64) * 10_000_000,
             margin_100ns: ((gop_secs * 2.0 * 10_000_000.0) as i64).max(10_000_000),
@@ -185,8 +221,14 @@ impl ReplayRing {
     /// Evicted by the same age window as video, so the two rings stay aligned
     /// and a clip never finds itself with video but no sound for its opening
     /// seconds.
-    pub fn push_audio(&self, data: &[u8], ts_100ns: i64, duration_100ns: i64) {
-        let mut inner = self.audio.lock().unwrap();
+    pub fn push_audio(
+        &self,
+        track: AudioTrack,
+        data: &[u8],
+        ts_100ns: i64,
+        duration_100ns: i64,
+    ) {
+        let mut inner = self.audio[track.index()].lock().unwrap();
         let mut buf = inner.pool.pop().unwrap_or_default();
         buf.clear();
         buf.extend_from_slice(data);
@@ -214,8 +256,8 @@ impl ReplayRing {
         }
     }
 
-    pub fn audio_report(&self) -> (usize, usize, f64) {
-        let inner = self.audio.lock().unwrap();
+    pub fn audio_report(&self, track: AudioTrack) -> (usize, usize, f64) {
+        let inner = self.audio[track.index()].lock().unwrap();
         let span = match (inner.packets.front(), inner.packets.back()) {
             (Some(a), Some(b)) => (b.ts_100ns - a.ts_100ns) as f64 / 1e7,
             _ => 0.0,
@@ -258,11 +300,13 @@ impl ReplayRing {
     /// Mux the buffered window into an MP4. This is the "hotkey" path, so it is
     /// timed and reported: the product promise is that the last N seconds are
     /// already encoded and saving them is only container work, no encoder work.
+    /// `audio_types` names the tracks to include and the negotiated AAC type
+    /// for each. Empty means a silent clip rather than a failure.
     pub fn save_mp4(
         &self,
         path: &str,
         cfg: &EncoderConfig,
-        audio_type: Option<&IMFMediaType>,
+        audio_types: &[(AudioTrack, IMFMediaType)],
     ) -> Result<SaveReport> {
         let t0 = Instant::now();
 
@@ -374,31 +418,39 @@ impl ReplayRing {
         // are dropped; without that the audio would lead the picture by however
         // far back the keyframe search had to reach.
         let base = snapshot[0].1;
-        let audio_snapshot: Vec<(Vec<u8>, i64, i64)> = match audio_type {
-            Some(_) => {
-                let inner = self.audio.lock().unwrap();
+
+        // One snapshot and one stream per track. A track that buffered nothing
+        // is skipped rather than added empty — an MP4 with a zero-sample audio
+        // track makes some players report the file as broken.
+        // Audio is bounded at *both* ends by the video it accompanies. The lower
+        // bound is the keyframe the clip starts on; the upper bound matters
+        // because the audio rings can outlast the video one — WGC is
+        // change-driven, so a static scene stops producing frames while sound
+        // keeps flowing. Without it the container reports the audio's length and
+        // the clip ends with sound over a frozen frame.
+        let last_video_ts = snapshot[snapshot.len() - 1].1;
+        let mut audio_tracks: Vec<MuxTrack> = Vec::new();
+        for (track, ty) in audio_types {
+            let packets: Vec<AudioPacket> = {
+                let inner = self.audio[track.index()].lock().unwrap();
                 inner
                     .packets
                     .iter()
-                    .filter(|p| p.ts_100ns >= base)
+                    .filter(|p| p.ts_100ns >= base && p.ts_100ns <= last_video_ts)
                     .map(|p| (p.bytes.clone(), p.ts_100ns, p.duration_100ns))
                     .collect()
+            };
+            if packets.is_empty() {
+                continue;
             }
-            None => Vec::new(),
-        };
-
-        let audio_stream = match (audio_type, audio_snapshot.is_empty()) {
-            (Some(t), false) => {
-                let s = unsafe { writer.AddStream(t).map_err(step("add audio stream"))? };
-                unsafe {
-                    writer
-                        .SetInputMediaType(s, t, None)
-                        .map_err(step("set audio input type"))?
-                };
-                Some(s)
-            }
-            _ => None,
-        };
+            let s = unsafe { writer.AddStream(ty).map_err(step("add audio stream"))? };
+            unsafe {
+                writer
+                    .SetInputMediaType(s, ty, None)
+                    .map_err(step("set audio input type"))?
+            };
+            audio_tracks.push((s, packets));
+        }
 
         unsafe { writer.BeginWriting().map_err(step("begin writing"))? };
 
@@ -407,20 +459,26 @@ impl ReplayRing {
         // entire video track followed by an entire audio track makes it buffer
         // the lot, and with throttling on it simply blocks. Interleaving is
         // also what keeps the resulting file seekable without a rewrite.
-        let mut order: Vec<(i64, bool, usize)> = Vec::with_capacity(snapshot.len() + audio_snapshot.len());
+        // (timestamp, track: None = video / Some(i) = audio_tracks[i], index)
+        let total = snapshot.len() + audio_tracks.iter().map(|(_, p)| p.len()).sum::<usize>();
+        let mut order: Vec<(i64, Option<usize>, usize)> = Vec::with_capacity(total);
         for (i, s) in snapshot.iter().enumerate() {
-            order.push((s.1, false, i));
+            order.push((s.1, None, i));
         }
-        for (i, a) in audio_snapshot.iter().enumerate() {
-            order.push((a.1, true, i));
+        for (t, (_, packets)) in audio_tracks.iter().enumerate() {
+            for (i, a) in packets.iter().enumerate() {
+                order.push((a.1, Some(t), i));
+            }
         }
-        order.sort_by_key(|(ts, is_audio, _)| (*ts, *is_audio));
+        order.sort_by_key(|(ts, track, _)| (*ts, track.is_some(), track.unwrap_or(0)));
 
         let mut bytes_written = 0usize;
-        for (_, is_audio, idx) in &order {
-            if *is_audio {
-                let Some(a_stream) = audio_stream else { continue };
-                let (data, ts, dur) = &audio_snapshot[*idx];
+        let mut audio_packets_written = 0usize;
+        for (_, track, idx) in &order {
+            if let Some(t) = track {
+                let (a_stream, packets) = &audio_tracks[*t];
+                let a_stream = *a_stream;
+                let (data, ts, dur) = &packets[*idx];
                 let buffer: IMFMediaBuffer =
                     unsafe { MFCreateMemoryBuffer(data.len() as u32)? };
                 unsafe {
@@ -440,6 +498,7 @@ impl ReplayRing {
                         .map_err(step("write audio sample"))?;
                 }
                 bytes_written += data.len();
+                audio_packets_written += 1;
                 continue;
             }
 
@@ -486,7 +545,8 @@ impl ReplayRing {
         let span = (snapshot[snapshot.len() - 1].1 - base) as f64 / 1e7;
         Ok(SaveReport {
             frames: snapshot.len(),
-            audio_packets: audio_snapshot.len(),
+            audio_packets: audio_packets_written,
+            audio_tracks: audio_tracks.len(),
             bytes: bytes_written,
             span_secs: span,
             elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,

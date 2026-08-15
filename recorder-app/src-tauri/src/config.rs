@@ -27,6 +27,10 @@ pub struct Config {
     pub auto_buffer: bool,
     /// Record desktop audio (WASAPI loopback) alongside video.
     pub capture_audio: bool,
+    /// Record the microphone as a **separate track** (§23), so a reviewer can
+    /// isolate or mute the player's own voice. Off by default: many machines
+    /// have no usable microphone, and a silent extra track is worse than none.
+    pub capture_mic: bool,
 }
 
 impl Default for Config {
@@ -42,6 +46,7 @@ impl Default for Config {
             save_hotkey: "Alt+F10".into(),
             auto_buffer: true,
             capture_audio: true,
+            capture_mic: false,
         }
     }
 }
@@ -70,7 +75,15 @@ impl Config {
     pub fn load() -> Config {
         let path = config_path();
         match std::fs::read_to_string(&path) {
-            Ok(s) => match serde_json::from_str::<Config>(&s) {
+            // Strip a UTF-8 BOM before parsing. Notepad and PowerShell's
+            // `-Encoding utf8` both write one, serde_json rejects it outright
+            // ("expected value at line 1 column 1"), and the fallback is
+            // silent to anyone running this as a tray app — a user who edited
+            // their settings by hand would simply find them reverted, with the
+            // explanation on a stderr they never see. This config is meant to
+            // be hand-editable, so it has to survive the editors people
+            // actually use.
+            Ok(s) => match serde_json::from_str::<Config>(s.trim_start_matches('\u{feff}')) {
                 Ok(c) => c,
                 Err(e) => {
                     // A malformed config must not stop the app from recording.

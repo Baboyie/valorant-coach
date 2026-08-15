@@ -188,10 +188,10 @@ pub struct Encoder {
     // Present on the replay path: the grabber's media sink, kept so it can be
     // shut down explicitly at finish.
     media_sink: Option<IMFMediaSink>,
-    /// Audio stream index, when this encoder was built with sound.
-    audio_stream: Option<u32>,
-    audio_block_align: u32,
-    audio_bytes_per_sec: u32,
+    /// (stream index, bytes/sec) per audio track, in the order given to
+    /// `to_file`. Empty on the replay path, where the grabber sink carries one
+    /// stream and audio runs its own encoders.
+    audio_streams: Vec<(u32, u32)>,
     first_ts: Option<i64>,
     nominal_duration: i64,
     pub frames_written: u64,
@@ -205,11 +205,15 @@ impl Encoder {
     /// video-only, which is what the benchmark path wants: §9's overhead result
     /// was measured without an audio encode and stays comparable only if the
     /// benchmark keeps running the same way.
+    /// `audio_fmts` adds one AAC stream per entry — desktop and microphone stay
+    /// separate tracks rather than being mixed (§23). Mixing would also be the
+    /// heavier option: the two devices frequently run at different sample
+    /// rates, so combining them would need resampling.
     pub fn to_file(
         dev: &d3d::Device,
         path: &str,
         cfg: &EncoderConfig,
-        audio_fmt: Option<&crate::audio::AudioFormat>,
+        audio_fmts: &[crate::audio::AudioFormat],
     ) -> Result<Encoder> {
         let (manager, attrs) = writer_attrs(dev)?;
         let writer = unsafe { MFCreateSinkWriterFromURL(&HSTRING::from(path), None, &attrs)? };
@@ -217,15 +221,12 @@ impl Encoder {
         unsafe { writer.SetInputMediaType(stream, &argb_input_type(cfg)?, None)? };
         configure_codec(&writer, stream, cfg.gop_frames.max(1));
 
-        let mut audio_stream = None;
-        let mut audio_block_align = 0;
-        let mut audio_bytes_per_sec = 0;
-        if let Some(fmt) = audio_fmt {
+        let mut audio_streams = Vec::new();
+        for fmt in audio_fmts {
             let a = unsafe { writer.AddStream(&aac_output_type(fmt)?)? };
             unsafe { writer.SetInputMediaType(a, &pcm_input_type(fmt)?, None)? };
-            audio_stream = Some(a);
-            audio_block_align = fmt.channels as u32 * 2;
-            audio_bytes_per_sec = fmt.sample_rate * audio_block_align;
+            let block_align = fmt.channels as u32 * 2;
+            audio_streams.push((a, fmt.sample_rate * block_align));
         }
 
         unsafe { writer.BeginWriting()? };
@@ -235,9 +236,7 @@ impl Encoder {
             stream,
             _dxgi_manager: manager,
             media_sink: None,
-            audio_stream,
-            audio_block_align,
-            audio_bytes_per_sec,
+            audio_streams,
             first_ts: None,
             nominal_duration: if cfg.fps > 0 { 10_000_000 / cfg.fps as i64 } else { 166_666 },
             frames_written: 0,
@@ -282,11 +281,9 @@ impl Encoder {
             _dxgi_manager: manager,
             media_sink: Some(sink),
             // The grabber sink carries exactly one stream, so audio cannot ride
-            // along here. The replay path gets sound from a second, parallel
-            // encoder writing into the same ring — see `AudioEncoder`.
-            audio_stream: None,
-            audio_block_align: 0,
-            audio_bytes_per_sec: 0,
+            // along here. The replay path gets sound from parallel encoders
+            // writing into the same ring — see `AudioEncoder`.
+            audio_streams: Vec::new(),
             first_ts: None,
             nominal_duration: if cfg.fps > 0 { 10_000_000 / cfg.fps as i64 } else { 166_666 },
             frames_written: 0,
@@ -301,8 +298,8 @@ impl Encoder {
     /// Rebasing both against the *video* first frame is what puts sound and
     /// picture on one timeline; using each stream's own first sample instead
     /// would silently shift audio by however long the encoder took to start.
-    pub fn write_audio(&mut self, pcm: &[i16], ts_100ns: i64) -> Result<()> {
-        let Some(stream) = self.audio_stream else {
+    pub fn write_audio(&mut self, track: usize, pcm: &[i16], ts_100ns: i64) -> Result<()> {
+        let Some(&(stream, bytes_per_sec)) = self.audio_streams.get(track) else {
             return Ok(());
         };
         if pcm.is_empty() {
@@ -331,8 +328,8 @@ impl Encoder {
 
         // Duration from the byte count and the format, not from a nominal
         // packet size — WASAPI packets vary in length.
-        let duration = if self.audio_bytes_per_sec > 0 {
-            (bytes as i64 * 10_000_000) / self.audio_bytes_per_sec as i64
+        let duration = if bytes_per_sec > 0 {
+            (bytes as i64 * 10_000_000) / bytes_per_sec as i64
         } else {
             0
         };
@@ -345,7 +342,6 @@ impl Encoder {
             self.writer.WriteSample(stream, &sample)?;
         }
         self.audio_written += 1;
-        let _ = self.audio_block_align;
         Ok(())
     }
 
@@ -417,10 +413,12 @@ pub struct AudioEncoder {
 
 impl AudioEncoder {
     pub fn to_replay(
+        track: crate::replay::AudioTrack,
         fmt: &crate::audio::AudioFormat,
         ring: Arc<ReplayRing>,
     ) -> Result<AudioEncoder> {
-        let callback: IMFSampleGrabberSinkCallback = AudioGrabberCallback { ring }.into();
+        let callback: IMFSampleGrabberSinkCallback =
+            AudioGrabberCallback { ring, track }.into();
         let activate =
             unsafe { MFCreateSampleGrabberSinkActivate(&aac_output_type(fmt)?, &callback)? };
         unsafe { activate.SetUINT32(&MF_SAMPLEGRABBERSINK_IGNORE_CLOCK, 1)? };
@@ -507,6 +505,7 @@ impl AudioEncoder {
 #[implement(IMFSampleGrabberSinkCallback)]
 struct AudioGrabberCallback {
     ring: Arc<ReplayRing>,
+    track: crate::replay::AudioTrack,
 }
 
 impl IMFSampleGrabberSinkCallback_Impl for AudioGrabberCallback_Impl {
@@ -528,7 +527,8 @@ impl IMFSampleGrabberSinkCallback_Impl for AudioGrabberCallback_Impl {
     ) -> Result<()> {
         if !buffer.is_null() && length > 0 {
             let data = unsafe { std::slice::from_raw_parts(buffer, length as usize) };
-            self.ring.push_audio(data, sample_time, sample_duration);
+            self.ring
+                .push_audio(self.track, data, sample_time, sample_duration);
         }
         Ok(())
     }

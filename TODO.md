@@ -56,9 +56,10 @@ three that matter, in order:
   `bench/` already measures them properly out-of-process, so the gap is the
   live display, not the capability. §17 says never fake these — an ETW consumer
   or nothing.
-- **Microphone (§23).** Loopback captures what the player hears, not what they
-  say. For a team-review product this is the more valuable half, and it is what
-  makes §23's "separate audio tracks" meaningful.
+- ~~Microphone (§23).~~ **Done** — captured as a separate AAC track alongside
+  desktop audio, on both the file and replay paths. Off by default (`capture_mic`)
+  since many machines have no usable microphone. Discord as its own third track
+  is still not built; it currently arrives inside the desktop mix.
 
 Also outstanding but lower value for now: Competitive/Quality/Custom presets
 (§11), storage estimation (§15), drive selection with free space and write speed

@@ -250,21 +250,29 @@ fn cmd_record() -> Result<()> {
     // `--no-audio` keeps the benchmark path exactly as §9 measured it: that
     // result was video-only, and an audio encode would make new runs
     // incomparable with the recorded table.
+    // Desktop and mic as separate tracks (§23). `--mic` opts in; a machine with
+    // no microphone is the common case, so it is not on by default.
     let want_audio = !std::env::args().any(|a| a == "--no-audio");
-    let mut audio_cap = None;
-    let mut audio_rx = None;
+    let want_mic = std::env::args().any(|a| a == "--mic");
+    let mut sources = Vec::new();
     if want_audio {
-        match audio::AudioCapture::start() {
+        sources.push(audio::AudioSource::Loopback);
+    }
+    if want_mic {
+        sources.push(audio::AudioSource::Microphone);
+    }
+
+    let mut caps: Vec<audio::AudioCapture> = Vec::new();
+    let mut rxs = Vec::new();
+    for src in sources {
+        match audio::AudioCapture::start(src) {
             Ok((c, rx)) => {
-                println!(
-                    "audio  : {} Hz, {} ch (device {} ch)",
-                    c.format.sample_rate, c.format.channels, c.format.device_channels
-                );
-                audio_cap = Some(c);
-                audio_rx = Some(rx);
+                println!("audio  : {:<10} {} Hz, {} ch", c.source.label(), c.format.sample_rate, c.format.channels);
+                caps.push(c);
+                rxs.push(rx);
             }
-            // Losing sound must not lose the recording.
-            Err(e) => eprintln!("audio unavailable, recording video only: {e}"),
+            // Losing one source must not lose the recording, or the other source.
+            Err(e) => eprintln!("{} unavailable, continuing without it: {e}", src.label()),
         }
     }
 
@@ -275,12 +283,8 @@ fn cmd_record() -> Result<()> {
         bitrate,
         gop_frames: encoder::EncoderConfig::default_gop(fps),
     };
-    let mut enc = encoder::Encoder::to_file(
-        &dev,
-        &out,
-        &cfg,
-        audio_cap.as_ref().map(|c| &c.format),
-    )?;
+    let fmts: Vec<audio::AudioFormat> = caps.iter().map(|c| c.format).collect();
+    let mut enc = encoder::Encoder::to_file(&dev, &out, &cfg, &fmts)?;
 
     // Only now: the encoder exists, so the first captured frame has somewhere to
     // go. Starting capture any earlier spends the ring on sink-writer init.
@@ -295,9 +299,9 @@ fn cmd_record() -> Result<()> {
         if let Ok(true) = cap.poll_resize() {
             println!("  (capture target resized; frame pool rebuilt, recording continues)");
         }
-        if let Some(rx) = &audio_rx {
+        for (i, rx) in rxs.iter().enumerate() {
             while let Ok(chunk) = rx.try_recv() {
-                enc.write_audio(&chunk.pcm, chunk.ts_100ns)?;
+                enc.write_audio(i, &chunk.pcm, chunk.ts_100ns)?;
             }
         }
         match frames.full_rx.recv_timeout(Duration::from_millis(100)) {
@@ -325,12 +329,12 @@ fn cmd_record() -> Result<()> {
     }
     // Stop audio before draining it, or the loop chases a stream that is still
     // being fed and never ends.
-    if let Some(c) = &mut audio_cap {
+    for c in &mut caps {
         c.stop();
     }
-    if let Some(rx) = &audio_rx {
+    for (i, rx) in rxs.iter().enumerate() {
         while let Ok(chunk) = rx.try_recv() {
-            let _ = enc.write_audio(&chunk.pcm, chunk.ts_100ns);
+            let _ = enc.write_audio(i, &chunk.pcm, chunk.ts_100ns);
         }
     }
 
@@ -342,10 +346,12 @@ fn cmd_record() -> Result<()> {
     println!();
     println!("frames submitted to encoder    : {submitted}");
     println!("frames accepted                : {written}");
-    if let Some(c) = &audio_cap {
+    if !caps.is_empty() {
         println!("audio packets encoded          : {audio_written}");
-        println!("audio discontinuities          : {}",
-                 c.stats.discontinuities.load(Ordering::Relaxed));
+        for c in &caps {
+            println!("  {:<10} discontinuities    : {}", c.source.label(),
+                     c.stats.discontinuities.load(Ordering::Relaxed));
+        }
     }
     if submitted > 0 {
         println!("encode submit  mean : {:>6.1} us", encode_ns_total as f64 / submitted as f64 / 1000.0);
@@ -371,8 +377,13 @@ fn cmd_record() -> Result<()> {
 /// playing rather than a well-formed stream of silence.
 fn cmd_audio() -> Result<()> {
     let secs: u64 = arg(2).and_then(|s| s.parse().ok()).unwrap_or(10);
+    let source = match arg(3).as_deref() {
+        Some("mic") | Some("microphone") => audio::AudioSource::Microphone,
+        _ => audio::AudioSource::Loopback,
+    };
 
-    let (cap, rx) = audio::AudioCapture::start()?;
+    let (cap, rx) = audio::AudioCapture::start(source)?;
+    println!("source : {}", source.label());
     println!(
         "device : {} Hz, {} channels (emitting {} — downmixed if needed)",
         cap.format.sample_rate, cap.format.device_channels, cap.format.channels
@@ -425,9 +436,18 @@ fn cmd_audio() -> Result<()> {
     println!("peak level       : {peak} / 32767  ({:.1} dBFS)", dbfs(peak as f64));
     println!("rms level        : {rms:.0} / 32767  ({:.1} dBFS)", dbfs(rms));
     if peak == 0 {
-        println!("\nNOTHING WAS PLAYING — the stream is well-formed but silent.");
-        println!("Loopback captures what the default output device renders, so play");
-        println!("audio and re-run before concluding anything about the capture path.");
+        println!("\nSILENT — the stream is well-formed but carries nothing.");
+        match source {
+            audio::AudioSource::Loopback => {
+                println!("Loopback captures what the default output device renders, so play");
+                println!("audio and re-run before concluding anything about the capture path.");
+            }
+            audio::AudioSource::Microphone => {
+                println!("Nothing reached the microphone. Check it is not muted, that Windows");
+                println!("microphone privacy allows desktop apps, and that the communications");
+                println!("default is the device you actually speak into.");
+            }
+        }
     }
     Ok(())
 }
@@ -492,23 +512,32 @@ fn cmd_replay() -> Result<()> {
     // Audio runs as a second encoder into the same ring: the grabber sink
     // carries one stream, so it cannot ride the video writer here.
     let want_audio = !std::env::args().any(|a| a == "--no-audio");
-    let mut audio_cap = None;
-    let mut audio_rx = None;
-    let mut audio_enc = None;
+    let want_mic = std::env::args().any(|a| a == "--mic");
+    let mut wanted = Vec::new();
     if want_audio {
-        match audio::AudioCapture::start() {
+        wanted.push((audio::AudioSource::Loopback, replay::AudioTrack::Desktop));
+    }
+    if want_mic {
+        wanted.push((audio::AudioSource::Microphone, replay::AudioTrack::Mic));
+    }
+
+    let mut caps: Vec<audio::AudioCapture> = Vec::new();
+    let mut rxs = Vec::new();
+    let mut aencs: Vec<(replay::AudioTrack, encoder::AudioEncoder)> = Vec::new();
+    for (src, track) in wanted {
+        match audio::AudioCapture::start(src) {
             Ok((c, rx)) => {
-                match encoder::AudioEncoder::to_replay(&c.format, std::sync::Arc::clone(&ring)) {
+                match encoder::AudioEncoder::to_replay(track, &c.format, std::sync::Arc::clone(&ring)) {
                     Ok(ae) => {
-                        println!("audio  : {} Hz, {} ch", c.format.sample_rate, c.format.channels);
-                        audio_enc = Some(ae);
-                        audio_cap = Some(c);
-                        audio_rx = Some(rx);
+                        println!("audio  : {:<10} {} Hz, {} ch", c.source.label(), c.format.sample_rate, c.format.channels);
+                        aencs.push((track, ae));
+                        caps.push(c);
+                        rxs.push(rx);
                     }
-                    Err(e) => eprintln!("audio encoder unavailable, video only: {e}"),
+                    Err(e) => eprintln!("{} encoder unavailable: {e}", src.label()),
                 }
             }
-            Err(e) => eprintln!("audio unavailable, video only: {e}"),
+            Err(e) => eprintln!("{} unavailable: {e}", src.label()),
         }
     }
 
@@ -522,9 +551,9 @@ fn cmd_replay() -> Result<()> {
         }
         // Audio is only submitted once video has a base timestamp, so both
         // streams are rebased against the same origin.
-        if let (Some(rx), Some(ae)) = (&audio_rx, &mut audio_enc) {
+        for (i, rx) in rxs.iter().enumerate() {
             while let Ok(chunk) = rx.try_recv() {
-                let _ = ae.write(&chunk.pcm, chunk.ts_100ns, video_base);
+                let _ = aencs[i].1.write(&chunk.pcm, chunk.ts_100ns, video_base);
             }
         }
         match frames.full_rx.recv_timeout(Duration::from_millis(100)) {
@@ -543,18 +572,22 @@ fn cmd_replay() -> Result<()> {
         let _ = enc.write_frame(&frames.ring.textures[slot], ts);
         let _ = frames.free_tx.send(slot);
     }
-    if let Some(c) = &mut audio_cap {
+    for c in &mut caps {
         c.stop();
     }
-    if let (Some(rx), Some(ae)) = (&audio_rx, &mut audio_enc) {
+    for (i, rx) in rxs.iter().enumerate() {
         while let Ok(chunk) = rx.try_recv() {
-            let _ = ae.write(&chunk.pcm, chunk.ts_100ns, video_base);
+            let _ = aencs[i].1.write(&chunk.pcm, chunk.ts_100ns, video_base);
         }
     }
     enc.finish()?;
-    // Keep the negotiated AAC type for the mux before the encoder is consumed.
-    let audio_type = audio_enc.as_ref().and_then(|ae| ae.negotiated_type.clone());
-    if let Some(ae) = audio_enc {
+    // Keep each negotiated AAC type for the mux before the encoders are consumed.
+    let audio_types: Vec<(replay::AudioTrack, windows::Win32::Media::MediaFoundation::IMFMediaType)> =
+        aencs
+            .iter()
+            .filter_map(|(t, ae)| ae.negotiated_type.clone().map(|ty| (*t, ty)))
+            .collect();
+    for (_, ae) in aencs {
         let _ = ae.finish();
     }
 
@@ -576,17 +609,17 @@ fn cmd_replay() -> Result<()> {
                  r.non_monotonic);
     }
 
-    let (a_packets, a_bytes, a_span) = ring.audio_report();
-    if audio_type.is_some() {
-        println!("audio ring  : {a_packets} packets, {:.1} MB, spanning {a_span:.1}s",
-                 a_bytes as f64 / 1e6);
+    for (track, _) in &audio_types {
+        let (a_packets, a_bytes, a_span) = ring.audio_report(*track);
+        println!("{:<11} : {a_packets} packets, {:.1} MB, spanning {a_span:.1}s",
+                 format!("{} ring", track.label()), a_bytes as f64 / 1e6);
     }
 
-    match ring.save_mp4(&out, &cfg, audio_type.as_ref()) {
+    match ring.save_mp4(&out, &cfg, &audio_types) {
         Ok(s) => {
             println!();
-            println!("saved  : last {:.1}s ({} frames, {} audio packets, {:.1} MB) -> {out}",
-                     s.span_secs, s.frames, s.audio_packets, s.bytes as f64 / 1e6);
+            println!("saved  : last {:.1}s ({} frames, {} audio packets across {} track(s), {:.1} MB) -> {out}",
+                     s.span_secs, s.frames, s.audio_packets, s.audio_tracks, s.bytes as f64 / 1e6);
             // The number that matters for the product: a save must feel
             // instant, because the moment it protects has already happened.
             println!("save cost : {:.0} ms (mux only — no encoder work)", s.elapsed_ms);

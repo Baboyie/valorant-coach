@@ -27,6 +27,30 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::Performance::QueryPerformanceFrequency;
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
+/// Which endpoint to record.
+///
+/// Kept as separate captures rather than one mixed stream, per §23's "separate
+/// audio tracks" — and because mixing would be the *heavier* option, not the
+/// lighter one: a microphone commonly runs at 44.1 kHz while the output device
+/// mixes at 48 kHz, so combining them would need resampling, which is exactly
+/// the audio processing §23 says to keep out of the way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioSource {
+    /// What the player hears: game and voice comms, as rendered.
+    Loopback,
+    /// What the player says.
+    Microphone,
+}
+
+impl AudioSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            AudioSource::Loopback => "desktop",
+            AudioSource::Microphone => "microphone",
+        }
+    }
+}
+
 /// One packet of captured audio, already converted to the encoder's format.
 pub struct AudioChunk {
     /// Interleaved 16-bit PCM, `channels` samples per frame.
@@ -82,6 +106,7 @@ pub struct AudioCapture {
     join: Option<std::thread::JoinHandle<()>>,
     pub format: AudioFormat,
     pub stats: Arc<AudioStats>,
+    pub source: AudioSource,
 }
 
 impl AudioCapture {
@@ -89,10 +114,12 @@ impl AudioCapture {
     ///
     /// Returns the receiver alongside the capture, so the consumer owns the
     /// queue and this struct owns only the thread.
-    pub fn start() -> Result<(AudioCapture, Receiver<AudioChunk>)> {
+    pub fn start(source: AudioSource) -> Result<(AudioCapture, Receiver<AudioChunk>)> {
         // Probe the device format on this thread so failure is reported to the
         // caller, rather than disappearing into a thread that silently exits.
-        let format = probe_format()?;
+        // A machine with no microphone is the common case for the mic source,
+        // and it must surface as a clean error, not a silent dead thread.
+        let format = probe_format(source)?;
 
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -101,16 +128,16 @@ impl AudioCapture {
         let thread_stop = Arc::clone(&stop);
         let thread_stats = Arc::clone(&stats);
         let join = std::thread::Builder::new()
-            .name("audio-loopback".into())
+            .name(format!("audio-{}", source.label()))
             .spawn(move || {
-                if let Err(e) = capture_loop(tx, thread_stop, thread_stats) {
-                    eprintln!("audio capture stopped: {e}");
+                if let Err(e) = capture_loop(source, tx, thread_stop, thread_stats) {
+                    eprintln!("{} capture stopped: {e}", source.label());
                 }
             })
             .expect("failed to spawn audio thread");
 
         Ok((
-            AudioCapture { stop, join: Some(join), format, stats },
+            AudioCapture { stop, join: Some(join), format, stats, source },
             rx,
         ))
     }
@@ -129,8 +156,27 @@ impl Drop for AudioCapture {
     }
 }
 
+/// The endpoint for a source.
+///
+/// `eCommunications` for the microphone rather than `eConsole`: that is the
+/// role Windows assigns to the headset a player actually talks into, which is
+/// frequently not their default playback-adjacent input.
+fn endpoint(
+    enumerator: &IMMDeviceEnumerator,
+    source: AudioSource,
+) -> Result<windows::Win32::Media::Audio::IMMDevice> {
+    unsafe {
+        match source {
+            AudioSource::Loopback => enumerator.GetDefaultAudioEndpoint(eRender, eConsole),
+            AudioSource::Microphone => {
+                enumerator.GetDefaultAudioEndpoint(eCapture, eCommunications)
+            }
+        }
+    }
+}
+
 /// Read the mix format without starting capture.
-fn probe_format() -> Result<AudioFormat> {
+fn probe_format(source: AudioSource) -> Result<AudioFormat> {
     // This runs on the caller's thread, which may or may not have COM up.
     // Initialising and uninitialising around the probe keeps it self-contained;
     // a nested init on an already-MTA thread is a no-op refcount bump.
@@ -141,7 +187,7 @@ fn probe_format() -> Result<AudioFormat> {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-            let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+            let device = endpoint(&enumerator, source)?;
             let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
             let mix = client.GetMixFormat()?;
             let fmt = AudioFormat {
@@ -158,6 +204,7 @@ fn probe_format() -> Result<AudioFormat> {
 }
 
 fn capture_loop(
+    source: AudioSource,
     tx: Sender<AudioChunk>,
     stop: Arc<AtomicBool>,
     stats: Arc<AudioStats>,
@@ -165,12 +212,13 @@ fn capture_loop(
     unsafe {
         CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
     }
-    let result = capture_loop_inner(tx, stop, stats);
+    let result = capture_loop_inner(source, tx, stop, stats);
     unsafe { CoUninitialize() };
     result
 }
 
 fn capture_loop_inner(
+    source: AudioSource,
     tx: Sender<AudioChunk>,
     stop: Arc<AtomicBool>,
     stats: Arc<AudioStats>,
@@ -178,8 +226,7 @@ fn capture_loop_inner(
     unsafe {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        // eRender, not eCapture: loopback taps the *output* device.
-        let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let device = endpoint(&enumerator, source)?;
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
 
         let mix = client.GetMixFormat()?;
@@ -188,15 +235,23 @@ fn capture_loop_inner(
         let bits = (*mix).wBitsPerSample;
         let is_float = mix_is_float(mix);
 
-        // Loopback is shared-mode only and the format is not negotiable — it
-        // must be the device mix format exactly. Conversion happens on our side.
+        // Shared mode, and the format is not negotiable — it must be the
+        // device mix format exactly. Conversion happens on our side.
+        //
+        // The LOOPBACK flag is what makes a *render* endpoint readable; a real
+        // capture endpoint like a microphone must not carry it, and passing it
+        // there fails initialisation outright.
         //
         // 200 ms buffer: large enough that a scheduling hiccup on this thread
         // does not drop audio, small enough to be irrelevant against the replay
         // ring's own memory.
+        let mut flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+        if source == AudioSource::Loopback {
+            flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
+        }
         client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+            flags,
             2_000_000,
             0,
             mix,

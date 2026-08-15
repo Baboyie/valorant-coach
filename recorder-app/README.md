@@ -62,7 +62,17 @@ restart.
 | `save_hotkey` | Tauri accelerator syntax. Default `Alt+F10`, not a bare function key: Valorant binds those, and a global hotkey that shadows a game binding is experienced as the game breaking |
 | `output_dir` | default `Videos\DEBRIEF` |
 | `auto_buffer` | start buffering as soon as Valorant appears |
-| `capture_audio` | record desktop audio via WASAPI loopback (default on). What the player hears — game and comms — not what they say; microphone is a separate stream and not built |
+| `capture_audio` | record desktop audio via WASAPI loopback (default on) — what the player hears, game and comms together |
+| `capture_mic` | record the microphone as a **separate track** (default off), so a reviewer can isolate or mute the player's own voice. Off by default because many machines have no usable microphone, and a silent extra track is worse than none |
+
+Audio tracks stay **separate rather than mixed** (§23). That is also the lighter
+option: a microphone often runs at a different sample rate than the output
+device, so mixing them would need resampling — exactly the audio processing §23
+says to keep out of the way.
+
+The config file must be plain UTF-8 **without a byte-order mark**. Notepad and
+PowerShell's `-Encoding utf8` both write one; a BOM is stripped on load, but
+other JSON tools may not be so forgiving.
 
 ## Self-test
 
