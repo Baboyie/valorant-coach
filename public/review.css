@@ -216,20 +216,61 @@ kbd {
 .lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
 .lightbox .x { position: fixed; top: 14px; right: 20px; font-size: 30px; }
 
-/* ---------------------------------------------------------------- stage */
+/* ----------------------------------------------------------- VOD viewer */
 
-.stage { margin-top: 18px; }
+.vodmodal {
+  position: fixed; inset: 0; z-index: 50; background: rgba(3,5,10,0.94);
+  display: grid; place-items: center; padding: 24px;
+}
+.vm-inner {
+  width: min(1500px, 100%); max-height: 100%;
+  display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+}
+.vm-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.vm-title strong { font-size: 15px; }
+.vm-title .muted { margin-left: 8px; }
+.vm-actions { display: flex; align-items: center; gap: 10px; }
+.vm-head .x { position: static; font-size: 26px; }
+
+/* Player left, POV rail right — the rail scrolls on its own so a long comment
+   list never pushes the other POVs out of reach. */
+.vm-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; overflow: hidden; }
+.vm-main { padding: 14px; overflow-y: auto; }
+.vm-rail {
+  border-left: 1px solid var(--line); background: var(--panel);
+  padding: 14px; overflow-y: auto;
+}
+@media (max-width: 980px) {
+  .vm-body { grid-template-columns: 1fr; }
+  .vm-rail { border-left: 0; border-top: 1px solid var(--line); }
+}
+
+.rail { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.railitem {
+  display: flex; gap: 10px; width: 100%; padding: 6px; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: 9px;
+  color: var(--text); font: inherit; cursor: pointer; align-items: center;
+}
+.railitem:hover { background: #171b28; border-color: var(--line); }
+.railitem.active { background: #17322e; border-color: var(--accent); cursor: default; }
+.railitem img { width: 96px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: #05070d; flex: none; }
+.railmeta { min-width: 0; }
+.railwho { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 .playerwrap {
   width: 100%; aspect-ratio: 16/9; background: #000;
-  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
 }
 .playerwrap iframe { width: 100%; height: 100%; border: 0; display: block; }
 
-.stagebar, .commentbar {
+.commentbar {
   display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 10px 12px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
 }
-.stagebar { justify-content: space-between; }
 .commentbar .author { flex: 0 0 120px; }
 .commentbar .body { flex: 1; }
 .at {

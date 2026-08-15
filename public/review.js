@@ -220,7 +220,6 @@ function openMatch(id) {
 
   $('viewMatches').classList.add('hidden');
   $('viewMatch').classList.remove('hidden');
-  $('stage').classList.add('hidden');
 
   $('mHero').src = m.mapSplash || '';
   $('mKind').textContent = m.kind;
@@ -442,10 +441,14 @@ let apiReady = new Promise((r) => { window.onYouTubeIframeAPIReady = r; });
 
 async function playVod(v) {
   state.vod = v;
-  $('stage').classList.remove('hidden');
+  $('vodModal').classList.remove('hidden');
+  // The page behind must not scroll while the viewer is open, or a scroll
+  // gesture aimed at the comment list drags the match page instead.
+  document.body.style.overflow = 'hidden';
   $('npWho').textContent = v.player || 'unknown POV';
   $('npLabel').textContent = state.match.label || '';
   renderPovs();
+  renderRail();
 
   await apiReady;
   if (state.player) state.player.loadVideoById(v.videoId);
@@ -457,6 +460,52 @@ async function playVod(v) {
     });
   }
   loadComments();
+}
+
+function closeVod() {
+  // Stop, do not merely hide: a hidden iframe keeps playing, and the first
+  // symptom is a teammate's voice coming from a page that looks closed.
+  if (state.player && state.ready) {
+    try { state.player.stopVideo(); } catch { /* player may be mid-teardown */ }
+  }
+  state.vod = null;
+  $('vodModal').classList.add('hidden');
+  document.body.style.overflow = '';
+  renderPovs();
+}
+
+/** The up-next rail: every other POV of this match, one click away. */
+function renderRail() {
+  const ul = $('rail');
+  ul.innerHTML = '';
+  const all = state.match ? state.match.vods : [];
+  $('railOnly').classList.toggle('hidden', all.length > 1);
+
+  for (const v of all) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.className = 'railitem' + (state.vod && state.vod.id === v.id ? ' active' : '');
+
+    const th = document.createElement('img');
+    th.src = thumb(v.videoId);
+    th.alt = '';
+    th.loading = 'lazy';
+
+    const meta = document.createElement('div');
+    meta.className = 'railmeta';
+    const who = document.createElement('div');
+    who.className = 'railwho';
+    who.textContent = v.player || 'unknown POV';
+    const tag = document.createElement('div');
+    tag.className = 'muted small';
+    tag.textContent = state.vod && state.vod.id === v.id ? 'Now playing' : 'Switch to this POV';
+    meta.append(who, tag);
+
+    b.append(th, meta);
+    b.addEventListener('click', () => { if (!state.vod || state.vod.id !== v.id) playVod(v); });
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
 }
 
 const now = () => (state.ready && state.player ? state.player.getCurrentTime() || 0 : 0);
@@ -608,9 +657,15 @@ $('delVod').addEventListener('click', async () => {
   if (!state.vod) return;
   await api(`/api/youtube/${state.vod.id}`, { method: 'DELETE' });
   const id = state.match.id;
+  closeVod();
   await loadMatches();
   openMatch(id);
 });
+
+$('vmClose').addEventListener('click', closeVod);
+// Backdrop click closes, but only the backdrop itself — a click that started
+// inside the player must not dismiss the thing being watched.
+$('vodModal').addEventListener('click', (e) => { if (e.target.id === 'vodModal') closeVod(); });
 
 $('post').addEventListener('click', postComment);
 $('body').addEventListener('keydown', (e) => { if (e.key === 'Enter') postComment(); });
@@ -646,7 +701,14 @@ $('lightbox').addEventListener('click', (e) => {
   if (e.target.id === 'lightbox') $('lightbox').classList.add('hidden');
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') $('lightbox').classList.add('hidden');
+  if (e.key !== 'Escape') return;
+  // Topmost first: the scoreboard viewer can sit over the VOD viewer, and
+  // Escape should peel one layer rather than dismissing everything at once.
+  if (!$('lightbox').classList.contains('hidden')) {
+    $('lightbox').classList.add('hidden');
+  } else if (!$('vodModal').classList.contains('hidden')) {
+    closeVod();
+  }
 });
 
 $('profileBtn').addEventListener('click', () => $('profile').classList.remove('hidden'));

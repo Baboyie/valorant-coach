@@ -121,31 +121,49 @@
     <div id="povGrid" class="povs"></div>
     <p id="noPovs" class="muted empty">No POVs on this match yet.</p>
 
-    <!-- Player appears under the POV row once one is picked, so the other
-         POVs stay visible and switching is one click. -->
-    <section id="stage" class="stage hidden">
-      <div class="playerwrap"><div id="player"></div></div>
+  </main>
 
-      <div class="stagebar">
-        <div>
+  <!-- ------------------------------------------------ VOD viewer (modal) -->
+  <!-- Full screen so the footage gets the room, with the other POVs in a rail
+       on the right. Switching is one click and never loses your place in the
+       match underneath. -->
+  <div id="vodModal" class="vodmodal hidden">
+    <div class="vm-inner">
+      <header class="vm-head">
+        <div class="vm-title">
           <strong id="npWho"></strong>
           <span id="npLabel" class="muted small"></span>
         </div>
-        <button id="delVod" class="ghost">Remove POV</button>
-      </div>
+        <div class="vm-actions">
+          <button id="delVod" class="ghost">Remove POV</button>
+          <button id="vmClose" class="x" aria-label="Close">×</button>
+        </div>
+      </header>
 
-      <div class="commentbar">
-        <span id="atTime" class="at">0:00</span>
-        <input id="author" class="author" type="text" placeholder="You" autocomplete="off" />
-        <span id="authorFixed" class="author fixed hidden"></span>
-        <input id="body" class="body" type="text" placeholder="Comment at this timestamp — Enter to post" autocomplete="off" />
-        <button id="post" class="primary">Post</button>
-      </div>
+      <div class="vm-body">
+        <section class="vm-main">
+          <div class="playerwrap"><div id="player"></div></div>
 
-      <ul id="comments" class="notes"></ul>
-      <p id="noComments" class="muted small">No comments on this POV yet.</p>
-    </section>
-  </main>
+          <div class="commentbar">
+            <span id="atTime" class="at">0:00</span>
+            <input id="author" class="author" type="text" placeholder="You" autocomplete="off" />
+            <span id="authorFixed" class="author fixed hidden"></span>
+            <input id="body" class="body" type="text" placeholder="Comment at this timestamp — Enter to post" autocomplete="off" />
+            <button id="post" class="primary">Post</button>
+          </div>
+
+          <ul id="comments" class="notes"></ul>
+          <p id="noComments" class="muted small">No comments on this POV yet.</p>
+        </section>
+
+        <aside class="vm-rail">
+          <h2>Teammate POVs</h2>
+          <ul id="rail" class="rail"></ul>
+          <p id="railOnly" class="muted small hidden">Only POV on this match.</p>
+        </aside>
+      </div>
+    </div>
+  </div>
 
   <!-- ------------------------------------------------------- dialogs -->
   <dialog id="matchDlg" class="dlg">
