@@ -357,6 +357,156 @@ impl Encoder {
     }
 }
 
+/// Encodes audio into the replay ring, parallel to the video `Encoder`.
+///
+/// A separate object because the sample grabber sink carries exactly one
+/// stream, so replay audio cannot ride the video writer the way it does on the
+/// file path. Two writers, two grabbers, one ring.
+pub struct AudioEncoder {
+    writer: IMFSinkWriter,
+    sink: IMFMediaSink,
+    stream: u32,
+    bytes_per_sec: u32,
+    first_ts: Option<i64>,
+    pub packets_written: u64,
+    /// The AAC type Media Foundation actually negotiated, including the codec
+    /// private data the MP4 sink needs to write `esds`. Asking MF for it beats
+    /// hand-rolling an AudioSpecificConfig blob — the same problem SPS/PPS
+    /// posed on the video side, solved by asking rather than constructing.
+    pub negotiated_type: Option<IMFMediaType>,
+}
+
+impl AudioEncoder {
+    pub fn to_replay(
+        fmt: &crate::audio::AudioFormat,
+        ring: Arc<ReplayRing>,
+    ) -> Result<AudioEncoder> {
+        let callback: IMFSampleGrabberSinkCallback = AudioGrabberCallback { ring }.into();
+        let activate =
+            unsafe { MFCreateSampleGrabberSinkActivate(&aac_output_type(fmt)?, &callback)? };
+        unsafe { activate.SetUINT32(&MF_SAMPLEGRABBERSINK_IGNORE_CLOCK, 1)? };
+        let sink: IMFMediaSink = unsafe { activate.ActivateObject()? };
+
+        let mut attrs: Option<IMFAttributes> = None;
+        unsafe { MFCreateAttributes(&mut attrs, 2)? };
+        let attrs = attrs.expect("MFCreateAttributes returned nothing");
+        unsafe {
+            attrs.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+            attrs.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
+        }
+
+        let writer = unsafe { MFCreateSinkWriterFromMediaSink(&sink, &attrs)? };
+        let stream = 0u32;
+        unsafe { writer.SetInputMediaType(stream, &pcm_input_type(fmt)?, None)? };
+        unsafe { writer.BeginWriting()? };
+
+        // Only valid once writing has begun and the type is settled.
+        let negotiated_type = unsafe {
+            sink.GetStreamSinkByIndex(0)
+                .and_then(|ss| ss.GetMediaTypeHandler())
+                .and_then(|h| h.GetCurrentMediaType())
+                .ok()
+        };
+
+        let block_align = fmt.channels as u32 * 2;
+        Ok(AudioEncoder {
+            writer,
+            sink,
+            stream,
+            bytes_per_sec: fmt.sample_rate * block_align,
+            first_ts: None,
+            packets_written: 0,
+            negotiated_type,
+        })
+    }
+
+    /// `base_ts` is the *video* first-frame timestamp, so both streams share an
+    /// origin. Passing None until video has started drops the lead-in rather
+    /// than letting audio define a timeline video will disagree with.
+    pub fn write(&mut self, pcm: &[i16], ts_100ns: i64, base_ts: Option<i64>) -> Result<()> {
+        let Some(base) = base_ts.or(self.first_ts) else {
+            return Ok(());
+        };
+        self.first_ts.get_or_insert(base);
+        let rel = ts_100ns - base;
+        if rel < 0 || pcm.is_empty() {
+            return Ok(());
+        }
+
+        let bytes = pcm.len() * 2;
+        let buffer: IMFMediaBuffer = unsafe { MFCreateMemoryBuffer(bytes as u32)? };
+        unsafe {
+            let mut dst: *mut u8 = std::ptr::null_mut();
+            buffer.Lock(&mut dst, None, None)?;
+            std::ptr::copy_nonoverlapping(pcm.as_ptr() as *const u8, dst, bytes);
+            buffer.Unlock()?;
+            buffer.SetCurrentLength(bytes as u32)?;
+        }
+        let duration = if self.bytes_per_sec > 0 {
+            (bytes as i64 * 10_000_000) / self.bytes_per_sec as i64
+        } else {
+            0
+        };
+        let sample: IMFSample = unsafe { MFCreateSample()? };
+        unsafe {
+            sample.AddBuffer(&buffer)?;
+            sample.SetSampleTime(rel)?;
+            sample.SetSampleDuration(duration)?;
+            self.writer.WriteSample(self.stream, &sample)?;
+        }
+        self.packets_written += 1;
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<()> {
+        unsafe { self.writer.Finalize()? };
+        let _ = unsafe { self.sink.Shutdown() };
+        Ok(())
+    }
+}
+
+#[implement(IMFSampleGrabberSinkCallback)]
+struct AudioGrabberCallback {
+    ring: Arc<ReplayRing>,
+}
+
+impl IMFSampleGrabberSinkCallback_Impl for AudioGrabberCallback_Impl {
+    fn OnSetPresentationClock(
+        &self,
+        _clock: windows::core::Ref<IMFPresentationClock>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn OnProcessSample(
+        &self,
+        _major_type: *const windows::core::GUID,
+        _sample_flags: u32,
+        sample_time: i64,
+        sample_duration: i64,
+        buffer: *const u8,
+        length: u32,
+    ) -> Result<()> {
+        if !buffer.is_null() && length > 0 {
+            let data = unsafe { std::slice::from_raw_parts(buffer, length as usize) };
+            self.ring.push_audio(data, sample_time, sample_duration);
+        }
+        Ok(())
+    }
+
+    fn OnShutdown(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl IMFClockStateSink_Impl for AudioGrabberCallback_Impl {
+    fn OnClockStart(&self, _t: i64, _o: i64) -> Result<()> { Ok(()) }
+    fn OnClockStop(&self, _t: i64) -> Result<()> { Ok(()) }
+    fn OnClockPause(&self, _t: i64) -> Result<()> { Ok(()) }
+    fn OnClockRestart(&self, _t: i64) -> Result<()> { Ok(()) }
+    fn OnClockSetRate(&self, _t: i64, _r: f32) -> Result<()> { Ok(()) }
+}
+
 /// Ask the encoder MFT for zero B-frames and low-latency mode (ADR §2).
 ///
 /// B-frames are not only a latency cost here: they are emitted in decode order

@@ -2,27 +2,16 @@
 
 Next things to build, with enough context to pick up cold.
 
-## 1. Desktop audio capture
+## 1. ~~Desktop audio capture~~ — done 2026-08-15
 
-Clips are currently silent. Add desktop audio so a saved clip has comms and game
-sound.
+WASAPI loopback → AAC, on both the file and replay paths. See ADR §9b.
 
-- **WASAPI loopback** (`IAudioClient` with `AUDCLNT_STREAMFLAGS_LOOPBACK`) is the
-  route — out-of-process, no injection, so it stays inside the ADR §1 rule the
-  same way WGC does.
-- Feed it into the existing sink writer as a **second stream** (AAC), rather than
-  muxing separately. The encoder path already exists; this is a new stream on it.
-- **The replay ring needs an audio ring too.** Today it holds encoded video
-  samples only, and the save picks a start point from a video keyframe. Audio has
-  no keyframes, so the clip's audio must be trimmed to the chosen video start
-  rather than the other way round.
-- **A/V sync is the risk.** Video timestamps come from WGC's
-  `SystemRelativeTime`; audio timestamps come from WASAPI's own clock. They need
-  rebasing to a common origin, and the §7 lesson applies — do not assume a
-  constant cadence for either.
-- Watch the overhead claim: §9 measured recording at no measurable cost with
-  video only. Adding an audio encode changes that, so the capped-240 benchmark
-  should be re-run before the claim is repeated.
+**One piece outstanding:** §9's "recording costs nothing measurable at a 240 fps
+cap" was measured **video-only**. Adding an audio encode invalidates it until
+re-measured, so the capped benchmark needs one more pass before that claim is
+repeated anywhere. `recorder-proto record --no-audio` reproduces the original
+video-only configuration for comparison. This needs a play session — see
+`bench/README.md`.
 
 ## 2. Team VOD reviewer
 
@@ -35,7 +24,7 @@ proxies the Riot API and generates AI coaching reports from match stats
 
 Not yet scoped. Open questions worth settling before building:
 
-- What is being reviewed — clips DEBRIEF produced, full match VODs, or both?
+- What is being reviewed — clips DEBRIEF produces, full match VODs, or both?
 - Is "team" synchronous (everyone watching together, shared playhead) or
   asynchronous (timestamped comments others read later)? These are very different
   builds.
@@ -48,3 +37,14 @@ Not yet scoped. Open questions worth settling before building:
 The desktop app has never been assessed against this: `public/planner.html` is
 68 KB of tactical planner that may already do some of what a reviewer needs.
 Read that strand before designing anything new.
+
+## 3. Smaller things
+
+- **Code signing.** Smart App Control blocks unsigned binaries outright, so
+  nothing ships to another machine until this is settled (ADR §9a). Independent
+  of §1's MSIX-for-borderless-capture reason.
+- **Microphone as a third stream.** Loopback captures what the player *hears*,
+  including their teammates, but not what the player *says*. A separate WASAPI
+  capture endpoint mixed as its own track would let a reviewer mute one side.
+- **Replay ring is `Mutex`-guarded** where ADR §3 specifies lock-free, and the
+  save is synchronous. Fine at 60 locks/s; revisit if a hotkey save ever stutters.

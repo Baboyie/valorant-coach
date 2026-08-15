@@ -50,8 +50,24 @@ struct Inner {
     non_monotonic: u64,
 }
 
+struct EncodedAudio {
+    bytes: Vec<u8>,
+    ts_100ns: i64,
+    duration_100ns: i64,
+}
+
+struct AudioInner {
+    packets: VecDeque<EncodedAudio>,
+    pool: Vec<Vec<u8>>,
+    bytes: usize,
+}
+
 pub struct ReplayRing {
     inner: Mutex<Inner>,
+    /// Separate lock from video on purpose: the two grabber callbacks run on
+    /// different Media Foundation worker threads, and sharing one lock would
+    /// make the audio thread wait behind a video push for no reason.
+    audio: Mutex<AudioInner>,
     window_100ns: i64,
     /// Retained beyond the window so that a keyframe exists at or before the
     /// window start — a clip must begin on an IDR or its first GOP is garbage.
@@ -76,6 +92,7 @@ pub struct RingReport {
 
 pub struct SaveReport {
     pub frames: usize,
+    pub audio_packets: usize,
     pub bytes: usize,
     pub span_secs: f64,
     pub elapsed_ms: f64,
@@ -93,6 +110,11 @@ impl ReplayRing {
                 allocs: 0,
                 reuses: 0,
                 non_monotonic: 0,
+            }),
+            audio: Mutex::new(AudioInner {
+                packets: VecDeque::new(),
+                pool: Vec::new(),
+                bytes: 0,
             }),
             window_100ns: (window_secs as i64) * 10_000_000,
             margin_100ns: (gop_secs as i64) * 2 * 10_000_000,
@@ -154,6 +176,49 @@ impl ReplayRing {
         }
     }
 
+    /// Accept one encoded audio packet, from the audio grabber's thread.
+    ///
+    /// Evicted by the same age window as video, so the two rings stay aligned
+    /// and a clip never finds itself with video but no sound for its opening
+    /// seconds.
+    pub fn push_audio(&self, data: &[u8], ts_100ns: i64, duration_100ns: i64) {
+        let mut inner = self.audio.lock().unwrap();
+        let mut buf = inner.pool.pop().unwrap_or_default();
+        buf.clear();
+        buf.extend_from_slice(data);
+        inner.bytes += buf.len();
+        inner.packets.push_back(EncodedAudio {
+            bytes: buf,
+            ts_100ns,
+            duration_100ns,
+        });
+
+        let horizon = self.window_100ns + self.margin_100ns;
+        loop {
+            let evict = match inner.packets.front() {
+                Some(f) if inner.packets.len() > 1 => ts_100ns - f.ts_100ns > horizon,
+                _ => false,
+            };
+            if !evict {
+                break;
+            }
+            let p = inner.packets.pop_front().unwrap();
+            inner.bytes -= p.bytes.len();
+            if inner.pool.len() < POOL_MAX {
+                inner.pool.push(p.bytes);
+            }
+        }
+    }
+
+    pub fn audio_report(&self) -> (usize, usize, f64) {
+        let inner = self.audio.lock().unwrap();
+        let span = match (inner.packets.front(), inner.packets.back()) {
+            (Some(a), Some(b)) => (b.ts_100ns - a.ts_100ns) as f64 / 1e7,
+            _ => 0.0,
+        };
+        (inner.packets.len(), inner.bytes, span)
+    }
+
     pub fn report(&self) -> RingReport {
         let inner = self.inner.lock().unwrap();
         let keyframes: Vec<i64> = inner
@@ -189,7 +254,12 @@ impl ReplayRing {
     /// Mux the buffered window into an MP4. This is the "hotkey" path, so it is
     /// timed and reported: the product promise is that the last N seconds are
     /// already encoded and saving them is only container work, no encoder work.
-    pub fn save_mp4(&self, path: &str, cfg: &EncoderConfig) -> Result<SaveReport> {
+    pub fn save_mp4(
+        &self,
+        path: &str,
+        cfg: &EncoderConfig,
+        audio_type: Option<&IMFMediaType>,
+    ) -> Result<SaveReport> {
         let t0 = Instant::now();
 
         // Snapshot under the lock, mux outside it. Muxing takes tens of
@@ -270,8 +340,19 @@ impl ReplayRing {
                 windows::core::Error::new(e.code(), format!("save_mp4/{what}: {}", e.message()))
             }
         };
+        // Throttling off. With it on, the sink writer paces one stream against
+        // the others and will block a caller that gets ahead — which a mux of
+        // already-encoded samples always does, since there is nothing to wait
+        // for. Leaving it on deadlocked the save outright.
+        let mux_attrs = unsafe {
+            let mut a: Option<IMFAttributes> = None;
+            MFCreateAttributes(&mut a, 1)?;
+            let a = a.expect("MFCreateAttributes returned nothing");
+            a.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
+            a
+        };
         let writer = unsafe {
-            MFCreateSinkWriterFromURL(&windows::core::HSTRING::from(path), None, None)
+            MFCreateSinkWriterFromURL(&windows::core::HSTRING::from(path), None, &mux_attrs)
                 .map_err(step("create writer"))?
         };
         let stream = unsafe { writer.AddStream(&mux_type).map_err(step("add stream"))? };
@@ -280,11 +361,86 @@ impl ReplayRing {
                 .SetInputMediaType(stream, &mux_type, None)
                 .map_err(step("set input type"))?
         };
+
+        // Audio, trimmed to the video start.
+        //
+        // The clip's start is dictated by video — it must begin on a keyframe —
+        // and audio has no keyframes to align to, so it is cut to fit rather
+        // than the other way round. Packets before the chosen video keyframe
+        // are dropped; without that the audio would lead the picture by however
+        // far back the keyframe search had to reach.
+        let base = snapshot[0].1;
+        let audio_snapshot: Vec<(Vec<u8>, i64, i64)> = match audio_type {
+            Some(_) => {
+                let inner = self.audio.lock().unwrap();
+                inner
+                    .packets
+                    .iter()
+                    .filter(|p| p.ts_100ns >= base)
+                    .map(|p| (p.bytes.clone(), p.ts_100ns, p.duration_100ns))
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+
+        let audio_stream = match (audio_type, audio_snapshot.is_empty()) {
+            (Some(t), false) => {
+                let s = unsafe { writer.AddStream(t).map_err(step("add audio stream"))? };
+                unsafe {
+                    writer
+                        .SetInputMediaType(s, t, None)
+                        .map_err(step("set audio input type"))?
+                };
+                Some(s)
+            }
+            _ => None,
+        };
+
         unsafe { writer.BeginWriting().map_err(step("begin writing"))? };
 
-        let base = snapshot[0].1;
+        // Write both streams in timestamp order rather than one after the
+        // other. A muxer expects roughly interleaved input; handing it an
+        // entire video track followed by an entire audio track makes it buffer
+        // the lot, and with throttling on it simply blocks. Interleaving is
+        // also what keeps the resulting file seekable without a rewrite.
+        let mut order: Vec<(i64, bool, usize)> = Vec::with_capacity(snapshot.len() + audio_snapshot.len());
+        for (i, s) in snapshot.iter().enumerate() {
+            order.push((s.1, false, i));
+        }
+        for (i, a) in audio_snapshot.iter().enumerate() {
+            order.push((a.1, true, i));
+        }
+        order.sort_by_key(|(ts, is_audio, _)| (*ts, *is_audio));
+
         let mut bytes_written = 0usize;
-        for (i, (data, ts, dur, keyframe)) in snapshot.iter().enumerate() {
+        for (_, is_audio, idx) in &order {
+            if *is_audio {
+                let Some(a_stream) = audio_stream else { continue };
+                let (data, ts, dur) = &audio_snapshot[*idx];
+                let buffer: IMFMediaBuffer =
+                    unsafe { MFCreateMemoryBuffer(data.len() as u32)? };
+                unsafe {
+                    let mut dst: *mut u8 = std::ptr::null_mut();
+                    buffer.Lock(&mut dst, None, None)?;
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
+                    buffer.Unlock()?;
+                    buffer.SetCurrentLength(data.len() as u32)?;
+                }
+                let sample: IMFSample = unsafe { MFCreateSample()? };
+                unsafe {
+                    sample.AddBuffer(&buffer)?;
+                    sample.SetSampleTime(ts - base)?;
+                    sample.SetSampleDuration(*dur)?;
+                    writer
+                        .WriteSample(a_stream, &sample)
+                        .map_err(step("write audio sample"))?;
+                }
+                bytes_written += data.len();
+                continue;
+            }
+
+            let i = *idx;
+            let (data, ts, dur, keyframe) = &snapshot[i];
             // Duration from the gap to the *next* sample, not the encoder's
             // nominal figure.
             //
@@ -326,6 +482,7 @@ impl ReplayRing {
         let span = (snapshot[snapshot.len() - 1].1 - base) as f64 / 1e7;
         Ok(SaveReport {
             frames: snapshot.len(),
+            audio_packets: audio_snapshot.len(),
             bytes: bytes_written,
             span_secs: span,
             elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,

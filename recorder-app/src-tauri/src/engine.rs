@@ -116,6 +116,18 @@ impl Engine {
 /* --------------------------------------------------------------- the thread */
 
 /// What the engine is currently running, with the live objects.
+/// Audio side of a session, absent when sound is off or unavailable.
+///
+/// Bundled rather than scattered so that "recording without audio" stays a
+/// single `None` instead of three fields that could disagree.
+struct AudioSide {
+    cap: recorder_core::audio::AudioCapture,
+    rx: Receiver<recorder_core::audio::AudioChunk>,
+    /// Only the replay path has its own encoder; on the file path audio rides
+    /// the video writer as a second stream.
+    enc: Option<encoder::AudioEncoder>,
+}
+
 enum Session {
     None,
     Buffering {
@@ -124,6 +136,10 @@ enum Session {
         enc: encoder::Encoder,
         ring: Arc<replay::ReplayRing>,
         cfg: encoder::EncoderConfig,
+        audio: Option<AudioSide>,
+        /// Video's first timestamp — both streams rebase against it so sound
+        /// and picture share an origin.
+        video_base: Option<i64>,
     },
     Recording {
         cap: capture::Capture,
@@ -131,6 +147,7 @@ enum Session {
         enc: encoder::Encoder,
         path: PathBuf,
         started: Instant,
+        audio: Option<AudioSide>,
     },
 }
 
@@ -171,7 +188,7 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
         // ---- detection ------------------------------------------------
         if Instant::now() >= next_detect {
             next_detect = Instant::now() + Duration::from_secs(2);
-            let hwnd = capture::find_valorant();
+            let hwnd = find_target();
             {
                 let mut s = status.lock().unwrap();
                 s.game_running = hwnd.is_some();
@@ -221,7 +238,7 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
 fn handle_cmd(cmd: Cmd, session: &mut Session, config: &mut Config, status: &Arc<Mutex<Status>>) {
     match cmd {
         Cmd::SaveClip => match session {
-            Session::Buffering { ring, cfg, .. } => {
+            Session::Buffering { ring, cfg, audio, .. } => {
                 let path = timestamped_path(&config.output_dir, "clip");
                 // Create the folder here rather than assuming it exists. The
                 // default is Videos\DEBRIEF, which will not exist on a first
@@ -233,7 +250,14 @@ fn handle_cmd(cmd: Cmd, session: &mut Session, config: &mut Config, status: &Arc
                         return;
                     }
                 }
-                match ring.save_mp4(&path.to_string_lossy(), cfg) {
+                // The AAC type Media Foundation negotiated, which the MP4 sink
+                // needs to write the codec config. Absent when audio is off,
+                // in which case the clip is silent rather than failing.
+                let audio_type = audio
+                    .as_ref()
+                    .and_then(|a| a.enc.as_ref())
+                    .and_then(|ae| ae.negotiated_type.clone());
+                match ring.save_mp4(&path.to_string_lossy(), cfg, audio_type.as_ref()) {
                     Ok(r) => {
                         let mut s = status.lock().unwrap();
                         s.last_clip = Some(path.to_string_lossy().to_string());
@@ -286,6 +310,20 @@ fn handle_cmd(cmd: Cmd, session: &mut Session, config: &mut Config, status: &Arc
     }
 }
 
+/// The window to record.
+///
+/// `DEBRIEF_TEST_FOREGROUND=1` substitutes the foreground window for the game.
+/// A test affordance, not a feature: the engine is otherwise only ever willing
+/// to record Valorant, which makes the audio and clip paths unverifiable
+/// whenever the game is not running. Mirrors `recorder-proto --foreground`.
+fn find_target() -> Option<windows::Win32::Foundation::HWND> {
+    if std::env::var("DEBRIEF_TEST_FOREGROUND").is_ok() {
+        let h = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+        return if h.0.is_null() { None } else { Some(h) };
+    }
+    capture::find_valorant()
+}
+
 fn start_buffering(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> windows::core::Result<Session> {
     let dev = d3d::Device::new()?;
     let (cap, frames) = capture::Capture::for_window(&dev, hwnd, config.fps, 6)?;
@@ -302,8 +340,31 @@ fn start_buffering(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> w
     // a 16 GB machine that is also running the game).
     let ring = Arc::new(replay::ReplayRing::new(config.window_secs, 2, 512 * 1024 * 1024));
     let enc = encoder::Encoder::to_replay(&dev, &cfg, Arc::clone(&ring))?;
+
+    // Audio needs its own encoder here: the sample grabber sink carries exactly
+    // one stream, so it cannot ride the video writer the way it does on the
+    // file path. Losing sound must never lose the recording, so every failure
+    // below degrades to video-only rather than propagating.
+    let audio = if config.capture_audio {
+        match recorder_core::audio::AudioCapture::start() {
+            Ok((c, rx)) => match encoder::AudioEncoder::to_replay(&c.format, Arc::clone(&ring)) {
+                Ok(ae) => Some(AudioSide { cap: c, rx, enc: Some(ae) }),
+                Err(e) => {
+                    eprintln!("audio encoder unavailable, buffering video only: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("audio unavailable, buffering video only: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     cap.start()?;
-    Ok(Session::Buffering { cap, frames, enc, ring, cfg })
+    Ok(Session::Buffering { cap, frames, enc, ring, cfg, audio, video_base: None })
 }
 
 fn start_recording(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> windows::core::Result<Session> {
@@ -321,53 +382,129 @@ fn start_recording(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> w
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let enc = encoder::Encoder::to_file(&dev, &path.to_string_lossy(), &cfg)?;
+
+    let audio = if config.capture_audio {
+        match recorder_core::audio::AudioCapture::start() {
+            Ok((c, rx)) => Some(AudioSide { cap: c, rx, enc: None }),
+            Err(e) => {
+                eprintln!("audio unavailable, recording video only: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // On the file path audio is a second stream on the same writer, so the
+    // encoder needs the format up front.
+    let enc = encoder::Encoder::to_file(
+        &dev,
+        &path.to_string_lossy(),
+        &cfg,
+        audio.as_ref().map(|a| &a.cap.format),
+    )?;
     cap.start()?;
-    Ok(Session::Recording { cap, frames, enc, path, started: Instant::now() })
+    Ok(Session::Recording { cap, frames, enc, path, started: Instant::now(), audio })
 }
 
 /// Move whatever frames are waiting. Returns true if nothing was captured.
+/// Move whatever frames are waiting. Returns true if nothing was captured.
+///
+/// The two session kinds route audio differently: buffering feeds a parallel
+/// `AudioEncoder` and must be told video's base timestamp explicitly, while
+/// recording feeds the shared video writer, which already knows its own base.
 fn pump(session: &mut Session, status: &Arc<Mutex<Status>>) -> bool {
-    let (cap, frames, enc) = match session {
-        Session::None => return true,
-        Session::Buffering { cap, frames, enc, .. } => (cap, frames, enc),
-        Session::Recording { cap, frames, enc, .. } => (cap, frames, enc),
-    };
-
-    let _ = cap.poll_resize();
-
-    let mut moved = 0;
     // Bounded batch so command handling and detection still get a turn even at
     // 240 fps arrival rates.
-    while moved < 32 {
-        match frames.full_rx.try_recv() {
-            Ok((slot, ts)) => {
-                let r = enc.write_frame(&frames.ring.textures[slot], ts);
-                // Return the slot even on failure, or the ring bleeds away.
-                let _ = frames.free_tx.send(slot);
-                if let Err(e) = r {
-                    set_error(status, &format!("encode failed: {e}"));
+    const BATCH: usize = 32;
+
+    match session {
+        Session::None => true,
+
+        Session::Buffering { cap, frames, enc, audio, video_base, .. } => {
+            let _ = cap.poll_resize();
+            let mut moved = 0;
+            while moved < BATCH {
+                match frames.full_rx.try_recv() {
+                    Ok((slot, ts)) => {
+                        video_base.get_or_insert(ts);
+                        let r = enc.write_frame(&frames.ring.textures[slot], ts);
+                        // Return the slot even on failure, or the ring bleeds away.
+                        let _ = frames.free_tx.send(slot);
+                        if let Err(e) = r {
+                            set_error(status, &format!("encode failed: {e}"));
+                        }
+                        moved += 1;
+                    }
+                    Err(_) => break,
                 }
-                moved += 1;
             }
-            Err(_) => break,
+            // Audio only once video has a base; packets before the first frame
+            // have no timeline to sit on and are dropped by the encoder.
+            if let Some(a) = audio {
+                if let Some(ae) = &mut a.enc {
+                    while let Ok(chunk) = a.rx.try_recv() {
+                        let _ = ae.write(&chunk.pcm, chunk.ts_100ns, *video_base);
+                    }
+                }
+            }
+            moved == 0
+        }
+
+        Session::Recording { cap, frames, enc, audio, .. } => {
+            let _ = cap.poll_resize();
+            let mut moved = 0;
+            while moved < BATCH {
+                match frames.full_rx.try_recv() {
+                    Ok((slot, ts)) => {
+                        let r = enc.write_frame(&frames.ring.textures[slot], ts);
+                        let _ = frames.free_tx.send(slot);
+                        if let Err(e) = r {
+                            set_error(status, &format!("encode failed: {e}"));
+                        }
+                        moved += 1;
+                    }
+                    Err(_) => break,
+                }
+            }
+            if let Some(a) = audio {
+                while let Ok(chunk) = a.rx.try_recv() {
+                    if let Err(e) = enc.write_audio(&chunk.pcm, chunk.ts_100ns) {
+                        set_error(status, &format!("audio encode failed: {e}"));
+                    }
+                }
+            }
+            moved == 0
         }
     }
-    moved == 0
 }
 
 fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>) {
     let old = std::mem::replace(session, Session::None);
     match old {
         Session::None => {}
-        Session::Buffering { cap, frames, mut enc, .. } => {
+        Session::Buffering { cap, frames, mut enc, audio, .. } => {
             let _ = cap.stop();
             drain(&frames, &mut enc);
             let _ = enc.finish();
+            if let Some(mut a) = audio {
+                a.cap.stop();
+                if let Some(ae) = a.enc.take() {
+                    let _ = ae.finish();
+                }
+            }
         }
-        Session::Recording { cap, frames, mut enc, path, .. } => {
+        Session::Recording { cap, frames, mut enc, path, audio, .. } => {
             let _ = cap.stop();
             drain(&frames, &mut enc);
+            // Stop audio before the final drain, or the loop chases a stream
+            // that is still being fed and never ends.
+            if let Some(mut a) = audio {
+                a.cap.stop();
+                while let Ok(chunk) = a.rx.try_recv() {
+                    let _ = enc.write_audio(&chunk.pcm, chunk.ts_100ns);
+                }
+            }
             // finish() writes the moov atom; skipping it leaves a file that
             // looks like an encoder bug rather than an interrupted recording.
             if let Err(e) = enc.finish() {

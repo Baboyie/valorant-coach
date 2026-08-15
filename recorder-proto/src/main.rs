@@ -474,15 +474,47 @@ fn cmd_replay() -> Result<()> {
     let cfg = encoder::EncoderConfig { width: w, height: h, fps, bitrate };
     let mut enc = encoder::Encoder::to_replay(&dev, &cfg, std::sync::Arc::clone(&ring))?;
 
+    // Audio runs as a second encoder into the same ring: the grabber sink
+    // carries one stream, so it cannot ride the video writer here.
+    let want_audio = !std::env::args().any(|a| a == "--no-audio");
+    let mut audio_cap = None;
+    let mut audio_rx = None;
+    let mut audio_enc = None;
+    if want_audio {
+        match audio::AudioCapture::start() {
+            Ok((c, rx)) => {
+                match encoder::AudioEncoder::to_replay(&c.format, std::sync::Arc::clone(&ring)) {
+                    Ok(ae) => {
+                        println!("audio  : {} Hz, {} ch", c.format.sample_rate, c.format.channels);
+                        audio_enc = Some(ae);
+                        audio_cap = Some(c);
+                        audio_rx = Some(rx);
+                    }
+                    Err(e) => eprintln!("audio encoder unavailable, video only: {e}"),
+                }
+            }
+            Err(e) => eprintln!("audio unavailable, video only: {e}"),
+        }
+    }
+
     cap.start()?;
+    let mut video_base: Option<i64> = None;
 
     let deadline = Instant::now() + Duration::from_secs(run_secs);
     while Instant::now() < deadline {
         if let Ok(true) = cap.poll_resize() {
             println!("  (capture target resized; frame pool rebuilt, recording continues)");
         }
+        // Audio is only submitted once video has a base timestamp, so both
+        // streams are rebased against the same origin.
+        if let (Some(rx), Some(ae)) = (&audio_rx, &mut audio_enc) {
+            while let Ok(chunk) = rx.try_recv() {
+                let _ = ae.write(&chunk.pcm, chunk.ts_100ns, video_base);
+            }
+        }
         match frames.full_rx.recv_timeout(Duration::from_millis(100)) {
             Ok((slot, ts)) => {
+                video_base.get_or_insert(ts);
                 let r = enc.write_frame(&frames.ring.textures[slot], ts);
                 let _ = frames.free_tx.send(slot);
                 r?;
@@ -496,7 +528,20 @@ fn cmd_replay() -> Result<()> {
         let _ = enc.write_frame(&frames.ring.textures[slot], ts);
         let _ = frames.free_tx.send(slot);
     }
+    if let Some(c) = &mut audio_cap {
+        c.stop();
+    }
+    if let (Some(rx), Some(ae)) = (&audio_rx, &mut audio_enc) {
+        while let Ok(chunk) = rx.try_recv() {
+            let _ = ae.write(&chunk.pcm, chunk.ts_100ns, video_base);
+        }
+    }
     enc.finish()?;
+    // Keep the negotiated AAC type for the mux before the encoder is consumed.
+    let audio_type = audio_enc.as_ref().and_then(|ae| ae.negotiated_type.clone());
+    if let Some(ae) = audio_enc {
+        let _ = ae.finish();
+    }
 
     print_capture_stats(&cap.stats, run_secs);
 
@@ -515,11 +560,17 @@ fn cmd_replay() -> Result<()> {
                  r.non_monotonic);
     }
 
-    match ring.save_mp4(&out, &cfg) {
+    let (a_packets, a_bytes, a_span) = ring.audio_report();
+    if audio_type.is_some() {
+        println!("audio ring  : {a_packets} packets, {:.1} MB, spanning {a_span:.1}s",
+                 a_bytes as f64 / 1e6);
+    }
+
+    match ring.save_mp4(&out, &cfg, audio_type.as_ref()) {
         Ok(s) => {
             println!();
-            println!("saved  : last {:.1}s ({} frames, {:.1} MB) -> {out}",
-                     s.span_secs, s.frames, s.bytes as f64 / 1e6);
+            println!("saved  : last {:.1}s ({} frames, {} audio packets, {:.1} MB) -> {out}",
+                     s.span_secs, s.frames, s.audio_packets, s.bytes as f64 / 1e6);
             // The number that matters for the product: a save must feel
             // instant, because the moment it protects has already happened.
             println!("save cost : {:.0} ms (mux only — no encoder work)", s.elapsed_ms);

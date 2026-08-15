@@ -62,6 +62,7 @@ restart.
 | `save_hotkey` | Tauri accelerator syntax. Default `Alt+F10`, not a bare function key: Valorant binds those, and a global hotkey that shadows a game binding is experienced as the game breaking |
 | `output_dir` | default `Videos\DEBRIEF` |
 | `auto_buffer` | start buffering as soon as Valorant appears |
+| `capture_audio` | record desktop audio via WASAPI loopback (default on). What the player hears — game and comms — not what they say; microphone is a separate stream and not built |
 
 ## Self-test
 
@@ -78,6 +79,11 @@ target\release\recorder-app.exe
 `DEBRIEF_AUTOTEST_SECS` sets how long to buffer before saving (default 20).
 The `console` feature keeps a console attached in release builds, which the
 autotest needs to report into.
+
+`DEBRIEF_TEST_FOREGROUND=1` records the foreground window instead of Valorant.
+A test affordance, not a feature: the engine is otherwise only ever willing to
+record the game, which makes the clip and audio paths unverifiable whenever it
+is not running.
 
 ## Building on a OneDrive-synced checkout
 

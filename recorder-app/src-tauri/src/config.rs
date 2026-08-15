@@ -25,6 +25,8 @@ pub struct Config {
     pub save_hotkey: String,
     /// Whether to start buffering automatically when Valorant appears.
     pub auto_buffer: bool,
+    /// Record desktop audio (WASAPI loopback) alongside video.
+    pub capture_audio: bool,
 }
 
 impl Default for Config {
@@ -39,6 +41,7 @@ impl Default for Config {
             // experiences as the game breaking.
             save_hotkey: "Alt+F10".into(),
             auto_buffer: true,
+            capture_audio: true,
         }
     }
 }

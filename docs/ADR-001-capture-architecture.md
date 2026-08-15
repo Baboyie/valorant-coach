@@ -592,6 +592,73 @@ as a packaged MSIX to remove the WGC capture border. That conclusion now has a
 second justification that is entirely independent of the border, which makes the
 code-signing story a prerequisite rather than a preference.
 
+## 9b. Desktop audio (built 2026-08-15)
+
+WASAPI loopback on the default render endpoint — what the player hears, game and
+comms together. Out-of-process, no injection, so it sits inside the same §1 rule
+that chose WGC: we open the *output* device, never the game.
+
+**Sync came free, by construction.** WASAPI reports a QPC position per packet and
+WGC reports `SystemRelativeTime` per frame; both are QueryPerformanceCounter in
+100 ns units, so they already share an origin. Both streams rebase against the
+**video** first frame rather than each stream's own first sample — the latter
+would shift audio by however long the encoder took to start.
+
+Capture verified exactly rather than approximately: a 440 Hz sine injected at
+amplitude 8000 came back at peak **7999**, RMS **5656** against the theoretical
+8000/√2 = 5657, at 48,060 frames/s on a 48 kHz device with an 8.00 s timestamp
+span over an 8 s run.
+
+Decisions worth keeping:
+
+- **Always stereo.** The MF AAC encoder takes mono or stereo only, while a
+  5.1/7.1 device mixes at 6 or 8 channels, so the downmix happens at the source
+  and no consumer has to care. ITU coefficients for the 5.1 case.
+- **Silent packets are written as zeros, not skipped.** A gap would shorten the
+  audio timeline and desync everything after the first quiet moment.
+- **The float mix is clamped before scaling**, since a shared-mode mix can exceed
+  ±1.0 when loud sources sum, and wrapping is an audible click rather than a clip.
+
+### Two paths, because the grabber sink carries one stream
+
+On the **file** path audio is simply a second stream on the same sink writer. On
+the **replay** path it cannot be: the sample grabber sink has exactly one stream,
+so audio runs a second encoder into a second ring, with its own lock so the two
+grabber threads never wait on each other.
+
+Muxing a clip then needs AAC codec-private data the way video needed SPS/PPS.
+Rather than hand-building an `AudioSpecificConfig` blob, the negotiated type is
+read back from the sink (`GetStreamSinkByIndex` → `GetMediaTypeHandler` →
+`GetCurrentMediaType`) after `BeginWriting` and reused for the mux — asking Media
+Foundation what it decided, instead of predicting it.
+
+**Audio is trimmed to the video start, not the reverse.** A clip must begin on a
+keyframe and audio has none, so packets before the chosen keyframe are dropped;
+without that the sound would lead the picture by however far back the keyframe
+search reached.
+
+### A deadlock the single-stream case could not produce
+
+The first two-stream save hung outright. The mux writer was created with no
+attributes — so throttling was **on** — and samples were written as an entire
+video track followed by an entire audio track. A sink writer paces streams
+against each other and blocks a caller that runs ahead, which a mux of
+already-encoded samples always does, since there is nothing to wait for.
+
+Fixed twice over: throttling disabled, and samples now written in **timestamp
+order across both streams**, which is what a muxer expects and what keeps the
+file seekable without a rewrite. Worth noting the shape of it — every earlier
+save was single-stream, so no amount of testing the replay path would have found
+this.
+
+Measured after the fix: clip save **17–30 ms**, files carrying `mp4a`/`esds` with
+both `soun` and `vide` handlers, on both the CLI and the app.
+
+**The §9 overhead result is now stale.** It was measured video-only, and an audio
+encode is new work. `recorder-proto record --no-audio` reproduces the original
+configuration; the capped-240 benchmark needs one more pass before that claim is
+repeated. Until then §9 stands only for video-only recording.
+
 ## 10. Blockers
 
 - ~~§29 acceptance benchmarking is gated on physical access to the home rig.~~
@@ -603,6 +670,9 @@ code-signing story a prerequisite rather than a preference.
   re-run (§9): no measurable cost — every delta inside the control's own spread.
   The *uncapped* cost remains bounded at 0–10% and would need a repeatable
   scripted route to pin tighter; not worth gating anything on.
+- **That result is video-only and now stale**: desktop audio (§9b) adds an encode
+  it did not measure. Needs one capped pass with audio on before the
+  no-measurable-cost claim is repeated. Gated on a play session.
 - ShadowPlay and OBS columns of the §5 matrix are not installed on this rig, so the
   current table is baseline × ours only.
 - ~~Replay buffer is unbuilt.~~ **Built and measured** — see §8a. Size changes are

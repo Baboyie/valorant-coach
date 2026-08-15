@@ -94,6 +94,23 @@ B-frames (reordered timestamps) and the clip's timing is suspect. NVENC's MFT
 defaults to none; the explicit B=0 request via ICodecAPI is rejected on this
 driver, so the counter is the check that the default holds.
 
+### `audio` — desktop audio capture on its own
+
+```bash
+cargo run --release -- audio 10
+```
+
+Captures WASAPI loopback for N seconds and reports packets, timestamp span, and
+levels. **Peak level is the number that matters**: packet counts prove the
+plumbing runs, but only a non-zero peak proves we are capturing what the speakers
+are playing rather than a well-formed stream of silence. Play something first —
+loopback records the default output device, so a quiet machine yields a correct,
+empty result.
+
+`record` and `replay` capture audio by default; `--no-audio` turns it off, which
+is what the benchmark path uses, since ADR §9's overhead figures were measured
+video-only and only stay comparable if new runs match.
+
 ### `--foreground` — target any window instead of the game
 
 ```bash
