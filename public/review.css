@@ -25,8 +25,24 @@ body {
 .brand h1 { font-size: 16px; margin: 0; letter-spacing: 0.16em; }
 .brand .sub { color: var(--muted); font-size: 12px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rec); align-self: center; }
+nav { display: flex; align-items: center; }
 nav a { color: var(--muted); text-decoration: none; margin-left: 16px; font-size: 13px; }
 nav a:hover { color: var(--accent); }
+
+.autharea { display: flex; align-items: center; margin-left: 16px; }
+.whoami { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.avatar { width: 22px; height: 22px; border-radius: 50%; display: block; }
+button.link {
+  background: none; border: 0; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 12px; padding: 0;
+}
+button.link:hover { color: var(--rec); }
+
+.commentbar .fixed {
+  display: flex; align-items: center; padding: 6px 9px; font-size: 13px;
+  color: var(--muted); background: #0e1119; border: 1px solid var(--line);
+  border-radius: 7px; white-space: nowrap;
+}
 
 h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.11em; color: var(--muted); margin: 0 0 10px; }
 

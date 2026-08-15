@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const vods = require('./vods');
+const auth = require('./auth');
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
@@ -12,6 +13,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Where uploaded POVs live. Configurable because the whole point of
 // self-hosting is putting 24 GB per match on a drive that has room for it.
 const DATA_DIR = process.env.DEBRIEF_DATA_DIR || path.join(__dirname, 'data');
+
+// Sign-in routes. No-ops unless GOOGLE_CLIENT_ID is set, so an existing
+// unauthenticated LAN setup keeps working exactly as it did.
+auth.install(app);
 
 // Only ever forward to Riot's own API hosts — never an arbitrary URL.
 const RIOT_HOST_RE = /^[a-z0-9-]+\.api\.riotgames\.com$/i;
@@ -212,7 +217,7 @@ app.get('/api/youtube', async (_req, res) => {
   res.json({ videos: await vods.readYouTube(DATA_DIR) });
 });
 
-app.post('/api/youtube', async (req, res) => {
+app.post('/api/youtube', auth.requireAuth, async (req, res) => {
   try {
     res.json(await vods.addYouTube(DATA_DIR, req.body || {}));
   } catch (e) {
@@ -220,7 +225,7 @@ app.post('/api/youtube', async (req, res) => {
   }
 });
 
-app.delete('/api/youtube/:id', async (req, res) => {
+app.delete('/api/youtube/:id', auth.requireAuth, async (req, res) => {
   res.json({ removed: await vods.removeYouTube(DATA_DIR, req.params.id) });
 });
 
@@ -230,15 +235,21 @@ app.get('/api/match/:matchId/comments', async (req, res) => {
   res.json({ comments: await vods.readComments(DATA_DIR, req.params.matchId) });
 });
 
-app.post('/api/match/:matchId/comments', async (req, res) => {
+app.post('/api/match/:matchId/comments', auth.requireAuth, async (req, res) => {
   try {
-    res.json(await vods.addComment(DATA_DIR, req.params.matchId, req.body || {}));
+    const body = { ...(req.body || {}) };
+    // When signed in, authorship comes from the verified identity rather than
+    // whatever the client typed. Otherwise "author" is a text field anyone can
+    // put a teammate's name in, which makes review notes worthless in an
+    // argument about who said what.
+    if (req.user) body.author = req.user.name;
+    res.json(await vods.addComment(DATA_DIR, req.params.matchId, body));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.delete('/api/match/:matchId/comments/:id', async (req, res) => {
+app.delete('/api/match/:matchId/comments/:id', auth.requireAuth, async (req, res) => {
   const removed = await vods.deleteComment(DATA_DIR, req.params.matchId, req.params.id);
   res.json({ removed });
 });

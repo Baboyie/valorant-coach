@@ -39,12 +39,30 @@ entirely, so automatic upload was not worth building yet.
 Self-hosted upload (`POST /api/vod`, range-request streaming, match grouping)
 stays in the server for VODs a team would rather not put on YouTube.
 
+**Sign-in is built** (`auth.js`): Google Sign-In for identity only. Set
+`GOOGLE_CLIENT_ID` and `DEBRIEF_ALLOWED_EMAILS` to turn it on; leave them unset
+and the server behaves exactly as it did before. Writes require a signed-in
+teammate, reads stay open, and comment authorship comes from the verified
+identity rather than a text field anyone could type a teammate's name into.
+
+The scopes are `openid email profile`, which Google does not class as sensitive
+— no verification review, no 7-day token expiry. **This server never receives a
+Google access or refresh token**, so a breach leaks a list of email addresses
+rather than the ability to upload to someone's channel. That property is worth
+protecting; it is the reason sign-in and YouTube upload were split.
+
 Still open:
 
-- Automatic upload from the desktop app (needs OAuth per teammate).
+- **Automatic YouTube upload.** Needs the sensitive `youtube.upload` scope, which
+  means OAuth per teammate *and* one of: publishing the app to Production and
+  passing Google verification (weeks, can be refused), living with 7-day token
+  expiry in Testing mode, or a Google Workspace domain where "Internal" user
+  type skips verification entirely. Also means this server would start holding
+  refresh tokens, which is the security property above, given away. Worth doing
+  only when pasting links becomes the bottleneck.
 - Comments are per-video; a comment does not appear on a teammate's POV of the
-  same moment. Would need the match grouping to be wired into the review page.
-- No auth on the server — a LAN or private VPS is the trust boundary.
+  same moment. The match grouping in `vods.js` already computes what that needs.
+- Sessions are in memory, so a server restart signs everyone out.
 
 ## 2b. Team VOD reviewer — original scoping notes
 

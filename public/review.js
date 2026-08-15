@@ -11,6 +11,9 @@ const state = {
   current: null,
   player: null,
   ready: false,
+  // null when sign-in is not configured on this server, in which case the app
+  // behaves as the open LAN tool it was before auth existed.
+  auth: { enabled: false, user: null, clientId: null },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -29,10 +32,73 @@ function fmt(secs) {
 }
 
 async function api(path, opts) {
-  const res = await fetch(path, opts);
+  // credentials: 'same-origin' so the session cookie rides along; without it
+  // every authenticated request would come back 401.
+  const res = await fetch(path, { credentials: 'same-origin', ...(opts || {}) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
+}
+
+/* ------------------------------------------------------------------ auth */
+
+async function loadAuth() {
+  try {
+    state.auth = await api('/api/auth/me');
+  } catch {
+    state.auth = { enabled: false, user: null, clientId: null };
+  }
+  renderAuth();
+  if (state.auth.enabled && !state.auth.user) mountSignIn();
+}
+
+function renderAuth() {
+  const { enabled, user } = state.auth;
+  const signedIn = !!user;
+  $('whoami').classList.toggle('hidden', !signedIn);
+  $('signinSlot').classList.toggle('hidden', !enabled || signedIn);
+
+  if (signedIn) {
+    $('myname').textContent = user.name;
+    if (user.picture) $('avatar').src = user.picture;
+    $('avatar').classList.toggle('hidden', !user.picture);
+  }
+
+  // When identity is verified the author field stops being editable — a
+  // free-text name is worth nothing in an argument about who said what.
+  $('author').classList.toggle('hidden', signedIn);
+  $('authorFixed').classList.toggle('hidden', !signedIn);
+  if (signedIn) $('authorFixed').textContent = user.name;
+}
+
+function mountSignIn() {
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.async = true;
+  s.onload = () => {
+    google.accounts.id.initialize({
+      client_id: state.auth.clientId,
+      callback: async (resp) => {
+        try {
+          await api('/api/auth/google', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credential: resp.credential }),
+          });
+          await loadAuth();
+        } catch (e) {
+          $('addErr').textContent = e.message;
+          $('addErr').classList.remove('hidden');
+        }
+      },
+    });
+    google.accounts.id.renderButton($('signinSlot'), {
+      theme: 'filled_black',
+      size: 'medium',
+      text: 'signin',
+    });
+  };
+  document.head.appendChild(s);
 }
 
 /* -------------------------------------------------------- youtube player */
@@ -176,7 +242,9 @@ async function loadComments() {
 async function postComment() {
   const body = $('body').value.trim();
   if (!body || !state.current) return;
-  const author = $('author').value.trim() || 'anonymous';
+  // Sent regardless, but the server overrides it with the verified identity
+  // when signed in — the client is not the authority on who wrote something.
+  const author = state.auth.user ? state.auth.user.name : $('author').value.trim() || 'anonymous';
   // Capture the time at the moment of posting, not when typing began — you
   // watch, you see it, you type. Using the earlier position would pin every
   // comment a few seconds before whatever it is about.
@@ -231,5 +299,13 @@ $('del').addEventListener('click', async () => {
   await loadVideos();
 });
 
+$('signout').addEventListener('click', async () => {
+  await api('/api/auth/logout', { method: 'POST' });
+  state.auth.user = null;
+  renderAuth();
+  mountSignIn();
+});
+
 $('author').value = localStorage.getItem('debrief.author') || '';
+loadAuth();
 loadVideos();
