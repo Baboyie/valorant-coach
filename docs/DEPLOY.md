@@ -117,12 +117,23 @@ string produces a site that looks perfect until the first save.
 
 ## How it is wired
 
-`api/[...path].js` re-exports the Express app, so every `/api/*` request runs
-the same server that runs locally. Everything else — pages, CSS, map data — is
-served straight from `public/` by the CDN and never reaches Node.
+A rewrite in `vercel.json` sends `/api/:path*` to `api/index.js`, which hands
+the request to the same Express app that runs locally. Everything else — pages,
+CSS, map data — is served straight from `public/` by the CDN and never reaches
+Node.
 
 `server.js` only calls `listen()` when it is the entry point, so the same file
 is a normal server locally and a module in production.
+
+**Do not replace the rewrite with an `api/[...path].js` catch-all.** That was
+the first attempt and it shipped broken: Vercel matched it as a *single*
+segment, so `/api/scrims` worked while `/api/auth/me`, `/api/scrims/:id/notes`,
+`/api/scrims/:id/shots` and `/api/match/:id/comments` all 404'd at the router,
+before any application code ran — so nothing appeared in the logs. Sign-in,
+team notes, scoreboards and comments were dead on a deployment that looked
+healthy. `test/api-entry.test.js` drives the entry point in the shape Vercel
+produces after the rewrite, which is the only way this gets caught before a
+deploy.
 
 ## What does not run on Vercel
 
