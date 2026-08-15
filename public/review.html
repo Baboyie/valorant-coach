@@ -80,6 +80,19 @@
     </div>
 
     <div class="rowhead">
+      <h2>Scoreboard</h2>
+      <span class="muted small">Paste a screenshot anywhere on this page, or</span>
+      <label class="filebtn">
+        Choose image<input id="shotFile" type="file" accept="image/*" hidden />
+      </label>
+    </div>
+    <div id="shotGrid" class="shots"></div>
+    <p id="noShots" class="muted empty">
+      No scoreboard yet. Take one with <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> and press <kbd>Ctrl</kbd>+<kbd>V</kbd> here.
+    </p>
+    <p id="shotErr" class="err hidden"></p>
+
+    <div class="rowhead">
       <h2>Teammate POVs</h2>
       <button id="addPov" class="primary">Add a POV</button>
     </div>
@@ -159,6 +172,13 @@
       </menu>
     </form>
   </dialog>
+
+  <!-- Full-size viewer. A scoreboard is unreadable at thumbnail size, which is
+       the whole reason it is uploaded. -->
+  <div id="lightbox" class="lightbox hidden">
+    <button id="lbClose" class="x" aria-label="Close">×</button>
+    <img id="lbImg" alt="" />
+  </div>
 
   <script src="review.js"></script>
 </body>

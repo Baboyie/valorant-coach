@@ -142,6 +142,44 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.11em; color: 
   color: #fff; font-size: 26px; text-shadow: 0 2px 12px rgba(0,0,0,0.7); opacity: 0.85;
 }
 
+/* ---------------------------------------------------------- scoreboards */
+
+.shots { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.shot {
+  position: relative; margin: 0; border: 1px solid var(--line);
+  border-radius: 10px; overflow: hidden; background: var(--panel);
+}
+.shot img {
+  display: block; width: 100%; cursor: zoom-in;
+  /* Scoreboards are wide; a fixed ratio keeps the row tidy without cropping
+     away the columns that matter. */
+  max-height: 220px; object-fit: contain; background: #05070d;
+}
+.shot .rm {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+  border-radius: 50%; background: rgba(6,8,14,0.82); color: var(--muted);
+  border: 1px solid var(--line); cursor: pointer; line-height: 1; padding: 0;
+}
+.shot .rm:hover { color: var(--rec); border-color: var(--rec); }
+
+.filebtn {
+  padding: 6px 11px; background: #1b2030; border: 1px solid var(--line);
+  border-radius: 7px; cursor: pointer; font-size: 13px;
+}
+.filebtn:hover { border-color: var(--accent); }
+
+kbd {
+  background: #1b2030; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; padding: 1px 5px; font: inherit; font-size: 11.5px;
+}
+
+.lightbox {
+  position: fixed; inset: 0; background: rgba(3,5,10,0.93); z-index: 60;
+  display: grid; place-items: center; padding: 40px; cursor: zoom-out;
+}
+.lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+.lightbox .x { position: fixed; top: 14px; right: 20px; font-size: 30px; }
+
 /* ---------------------------------------------------------------- stage */
 
 .stage { margin-top: 18px; }

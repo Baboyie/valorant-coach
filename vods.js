@@ -241,6 +241,85 @@ async function deleteMatch(baseDir, id) {
   return list.length !== next.length;
 }
 
+/* ---------------------------------------------------- match screenshots */
+
+// Scoreboards, round timelines, economy tabs — the still images a team argues
+// over. Stored per match beside everything else.
+//
+// Only these types are accepted, and the extension is derived from the
+// content-type rather than from any filename the client supplies: a filename is
+// attacker-controlled input, and honouring it is how "scoreboard.png" turns
+// into something executable.
+const SHOT_TYPES = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+// Generous for a 4K screenshot, small enough that a wrong paste cannot fill a
+// disk.
+const SHOT_MAX_BYTES = 12 * 1024 * 1024;
+
+function shotsDir(baseDir, matchId) {
+  return path.join(vodRoot(baseDir), 'shots', matchId);
+}
+
+function shotsIndexPath(baseDir, matchId) {
+  return path.join(shotsDir(baseDir, matchId), 'index.json');
+}
+
+async function readShots(baseDir, matchId) {
+  if (!safeId(matchId)) return [];
+  try {
+    return JSON.parse(await fsp.readFile(shotsIndexPath(baseDir, matchId), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+async function addShot(baseDir, matchId, { contentType, bytes, label }) {
+  if (!safeId(matchId)) throw new Error('Bad match id.');
+  const ext = SHOT_TYPES[contentType];
+  if (!ext) throw new Error(`Unsupported image type: ${contentType || 'none given'}.`);
+  if (!bytes || !bytes.length) throw new Error('Empty upload.');
+  if (bytes.length > SHOT_MAX_BYTES) throw new Error('Image is larger than 12 MB.');
+
+  const id = newId();
+  const dir = shotsDir(baseDir, matchId);
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, `${id}.${ext}`), bytes);
+
+  const list = await readShots(baseDir, matchId);
+  const record = {
+    id,
+    ext,
+    contentType,
+    label: String(label || '').slice(0, 120),
+    bytes: bytes.length,
+    addedUtc: new Date().toISOString(),
+  };
+  list.push(record);
+  await fsp.writeFile(shotsIndexPath(baseDir, matchId), JSON.stringify(list, null, 2));
+  return record;
+}
+
+async function shotFile(baseDir, matchId, shotId) {
+  if (!safeId(matchId) || !safeId(shotId)) return null;
+  const list = await readShots(baseDir, matchId);
+  const rec = list.find((s) => s.id === shotId);
+  if (!rec) return null;
+  return { path: path.join(shotsDir(baseDir, matchId), `${shotId}.${rec.ext}`), rec };
+}
+
+async function deleteShot(baseDir, matchId, shotId) {
+  const found = await shotFile(baseDir, matchId, shotId);
+  if (!found) return false;
+  await fsp.rm(found.path, { force: true });
+  const list = (await readShots(baseDir, matchId)).filter((s) => s.id !== shotId);
+  await fsp.writeFile(shotsIndexPath(baseDir, matchId), JSON.stringify(list, null, 2));
+  return true;
+}
+
 /* --------------------------------------------------------- youtube VODs */
 
 // A registered YouTube video: the team uploads wherever they like and hands us
@@ -329,6 +408,12 @@ module.exports = {
   readMatches,
   saveMatch,
   deleteMatch,
+  readShots,
+  addShot,
+  shotFile,
+  deleteShot,
+  SHOT_TYPES,
+  SHOT_MAX_BYTES,
   parseYouTubeId,
   readYouTube,
   addYouTube,

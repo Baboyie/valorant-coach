@@ -242,6 +242,46 @@ app.delete('/api/scrims/:id', auth.requireAuth, async (req, res) => {
   res.json({ removed: await vods.deleteMatch(DATA_DIR, req.params.id) });
 });
 
+/* --------------------------------------------------- match screenshots */
+
+app.get('/api/scrims/:id/shots', async (req, res) => {
+  res.json({ shots: await vods.readShots(DATA_DIR, req.params.id) });
+});
+
+// Raw image bytes in the body, type from Content-Type, optional label in a
+// header. Same shape as the VOD upload, and it means a browser can post a
+// pasted clipboard Blob directly with no multipart encoding in between.
+app.post(
+  '/api/scrims/:id/shots',
+  auth.requireAuth,
+  express.raw({ type: Object.keys(vods.SHOT_TYPES), limit: vods.SHOT_MAX_BYTES }),
+  async (req, res) => {
+    try {
+      const rec = await vods.addShot(DATA_DIR, req.params.id, {
+        contentType: req.get('content-type'),
+        bytes: req.body,
+        label: decodeURIComponent(req.get('x-shot-label') || ''),
+      });
+      res.json(rec);
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+app.get('/api/scrims/:id/shots/:shotId', async (req, res) => {
+  const found = await vods.shotFile(DATA_DIR, req.params.id, req.params.shotId);
+  if (!found) return res.status(404).json({ error: 'No such image.' });
+  res.type(found.rec.contentType);
+  // These never change once written, so let the browser keep them.
+  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  fs.createReadStream(found.path).pipe(res);
+});
+
+app.delete('/api/scrims/:id/shots/:shotId', auth.requireAuth, async (req, res) => {
+  res.json({ removed: await vods.deleteShot(DATA_DIR, req.params.id, req.params.shotId) });
+});
+
 /* --------------------------------------------------------- youtube VODs */
 
 app.get('/api/youtube', async (_req, res) => {

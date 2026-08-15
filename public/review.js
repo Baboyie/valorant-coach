@@ -226,6 +226,7 @@ function openMatch(id) {
   $('mSub').textContent = [m.map, prettyDate(m.playedOn), m.score].filter(Boolean).join(' · ');
 
   renderPovs();
+  loadShots();
 }
 
 function renderPovs() {
@@ -258,6 +259,83 @@ function renderPovs() {
     grid.appendChild(b);
   }
 }
+
+/* ---------------------------------------------------------- scoreboards */
+
+async function loadShots() {
+  if (!state.match) return;
+  const { shots } = await api(`/api/scrims/${state.match.id}/shots`);
+  const grid = $('shotGrid');
+  grid.innerHTML = '';
+  $('noShots').classList.toggle('hidden', shots.length > 0);
+
+  for (const s of shots) {
+    const src = `/api/scrims/${state.match.id}/shots/${s.id}`;
+    const fig = document.createElement('figure');
+    fig.className = 'shot';
+
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = s.label || 'scoreboard';
+    img.addEventListener('click', () => openLightbox(src));
+
+    const rm = document.createElement('button');
+    rm.className = 'rm';
+    rm.textContent = '×';
+    rm.title = 'Remove';
+    rm.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await api(`/api/scrims/${state.match.id}/shots/${s.id}`, { method: 'DELETE' });
+      loadShots();
+    });
+
+    fig.append(img, rm);
+    grid.appendChild(fig);
+  }
+}
+
+/**
+ * Upload a Blob or File as-is.
+ *
+ * Posted as raw bytes with the image's own content type rather than multipart,
+ * so a clipboard Blob goes straight up with nothing in between — which is the
+ * point, because a scoreboard arrives via Win+Shift+S and Ctrl+V, not via a
+ * file that was ever saved to disk.
+ */
+async function uploadShot(blob, label) {
+  if (!state.match) return;
+  $('shotErr').classList.add('hidden');
+  try {
+    await api(`/api/scrims/${state.match.id}/shots`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': blob.type || 'image/png',
+        'X-Shot-Label': encodeURIComponent(label || ''),
+      },
+      body: blob,
+    });
+    loadShots();
+  } catch (e) {
+    $('shotErr').textContent = e.message;
+    $('shotErr').classList.remove('hidden');
+  }
+}
+
+function openLightbox(src) {
+  $('lbImg').src = src;
+  $('lightbox').classList.remove('hidden');
+}
+
+// Paste anywhere while a match is open. Scoped to the match view so a paste
+// into the comment box is not hijacked into an upload.
+document.addEventListener('paste', (e) => {
+  if (!state.match || $('viewMatch').classList.contains('hidden')) return;
+  const items = [...(e.clipboardData?.items || [])];
+  const img = items.find((i) => i.type.startsWith('image/'));
+  if (!img) return;
+  e.preventDefault();
+  uploadShot(img.getAsFile(), 'pasted');
+});
 
 /* --------------------------------------------------------------- player */
 
@@ -454,6 +532,20 @@ $('demoSignIn').addEventListener('click', () => {
     demo: true,
   };
   renderAuth();
+});
+
+$('shotFile').addEventListener('change', (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (f) uploadShot(f, f.name);
+  e.target.value = '';
+});
+
+$('lbClose').addEventListener('click', () => $('lightbox').classList.add('hidden'));
+$('lightbox').addEventListener('click', (e) => {
+  if (e.target.id === 'lightbox') $('lightbox').classList.add('hidden');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $('lightbox').classList.add('hidden');
 });
 
 $('profileBtn').addEventListener('click', () => $('profile').classList.remove('hidden'));

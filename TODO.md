@@ -39,6 +39,12 @@ entirely, so automatic upload was not worth building yet.
 Self-hosted upload (`POST /api/vod`, range-request streaming, match grouping)
 stays in the server for VODs a team would rather not put on YouTube.
 
+**Scoreboards** are per-match images: paste one anywhere on the match view
+(Win+Shift+S then Ctrl+V, which is how they are actually taken) or pick a file.
+Click to view full size. Uploaded as raw bytes with the image's own content
+type rather than multipart, so a clipboard Blob goes straight up. Type is taken
+from Content-Type and never from a client-supplied filename, capped at 12 MB.
+
 **Sign-in is built** (`auth.js`): Google Sign-In for identity only. Set
 `GOOGLE_CLIENT_ID` and `DEBRIEF_ALLOWED_EMAILS` to turn it on; leave them unset
 and the server behaves exactly as it did before. Writes require a signed-in
