@@ -7,6 +7,7 @@
 mod config;
 mod engine;
 mod sysmon;
+mod vod;
 
 use std::sync::Mutex;
 

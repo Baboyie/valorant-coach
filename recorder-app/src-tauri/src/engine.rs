@@ -193,7 +193,13 @@ enum Session {
         enc: encoder::Encoder,
         path: PathBuf,
         started: Instant,
+        /// Wall clock at the moment capture began — the alignment key for
+        /// multi-POV review. Captured here rather than derived from the file
+        /// later: a file's mtime is the *end* of a recording, which would put
+        /// every POV out by its own duration.
+        started_utc: (String, i64),
         audio: Vec<AudioSide>,
+        cfg: encoder::EncoderConfig,
     },
 }
 
@@ -230,7 +236,7 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
         // ---- commands -------------------------------------------------
         match rx.try_recv() {
             Ok(Cmd::Shutdown) | Err(TryRecvError::Disconnected) => {
-                teardown(&mut session, &status);
+                teardown(&mut session, &status, &config);
                 break;
             }
             Ok(cmd) => handle_cmd(cmd, &mut session, &mut config, &status),
@@ -265,7 +271,7 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
                 // Game vanished mid-session: stop cleanly. A recording loses
                 // nothing — finish() still writes the moov atom.
                 (Session::Buffering { .. }, None) | (Session::Recording { .. }, None) => {
-                    teardown(&mut session, &status);
+                    teardown(&mut session, &status, &config);
                 }
                 _ => {}
             }
@@ -326,6 +332,22 @@ fn handle_cmd(cmd: Cmd, session: &mut Session, config: &mut Config, status: &Arc
                         .collect();
                 match ring.save_mp4(&path.to_string_lossy(), cfg, &audio_types) {
                     Ok(r) => {
+                        // A clip's start is derived, not observed: the ring
+                        // holds the window *ending* now, so the footage began
+                        // `span_secs` ago. Getting this wrong would shift this
+                        // POV against everyone else's by the clip length.
+                        let (_, now_ms) = crate::vod::now_utc();
+                        let start_ms = now_ms - (r.span_secs * 1000.0) as i64;
+                        write_sidecar(
+                            &path,
+                            &(crate::vod::rfc3339(start_ms), start_ms),
+                            r.span_secs,
+                            cfg,
+                            audio,
+                            config,
+                            crate::vod::RecordingKind::Clip,
+                            status,
+                        );
                         let mut s = status.lock().unwrap();
                         s.last_clip = Some(path.to_string_lossy().to_string());
                         s.last_save_ms = Some(r.elapsed_ms);
@@ -350,7 +372,7 @@ fn handle_cmd(cmd: Cmd, session: &mut Session, config: &mut Config, status: &Arc
             };
             // Drop the buffering session first: one capture session per target,
             // and v1 does not run two encoders at once.
-            teardown(session, status);
+            teardown(session, status, config);
             match start_recording(hwnd, config) {
                 Ok(new) => {
                     *session = new;
@@ -362,7 +384,7 @@ fn handle_cmd(cmd: Cmd, session: &mut Session, config: &mut Config, status: &Arc
 
         Cmd::StopRecording => {
             if let Session::Recording { .. } = session {
-                teardown(session, status);
+                teardown(session, status, config);
             }
         }
 
@@ -370,7 +392,7 @@ fn handle_cmd(cmd: Cmd, session: &mut Session, config: &mut Config, status: &Arc
             *config = *new;
             // Rebuild so window length, fps and bitrate take effect. Detection
             // restarts buffering on the next tick.
-            teardown(session, status);
+            teardown(session, status, config);
         }
 
         Cmd::Shutdown => unreachable!("handled by the caller"),
@@ -453,7 +475,56 @@ fn start_recording(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> w
         audio.iter().map(|a| a.cap.format).collect();
     let enc = encoder::Encoder::to_file(&dev, &path.to_string_lossy(), &cfg, &fmts)?;
     cap.start()?;
-    Ok(Session::Recording { cap, frames, enc, path, started: Instant::now(), audio })
+    Ok(Session::Recording {
+        cap,
+        frames,
+        enc,
+        path,
+        started: Instant::now(),
+        started_utc: crate::vod::now_utc(),
+        audio,
+        cfg,
+    })
+}
+
+/// Write the sidecar that makes a recording reviewable alongside other POVs.
+///
+/// Failure here is reported but never fatal: a recording without metadata is
+/// still a recording, and losing the video because its JSON could not be
+/// written would be a bad trade.
+fn write_sidecar(
+    path: &Path,
+    started_utc: &(String, i64),
+    duration_secs: f64,
+    cfg: &encoder::EncoderConfig,
+    audio: &[AudioSide],
+    config: &Config,
+    kind: crate::vod::RecordingKind,
+    status: &Arc<Mutex<Status>>,
+) {
+    let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let meta = crate::vod::VodMeta {
+        version: 1,
+        started_utc: started_utc.0.clone(),
+        started_epoch_ms: started_utc.1,
+        duration_secs: (duration_secs * 100.0).round() / 100.0,
+        width: cfg.width,
+        height: cfg.height,
+        fps: cfg.fps,
+        video_codec: "h264".into(),
+        audio_tracks: audio.iter().map(|a| a.track.label().to_string()).collect(),
+        player: config.player.clone(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        kind,
+        file: path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        bytes,
+    };
+    if let Err(e) = meta.write(path) {
+        set_error(status, &format!("could not write recording metadata: {e}"));
+    }
 }
 
 /// Move whatever frames are waiting. Returns true if nothing was captured.
@@ -528,7 +599,7 @@ fn pump(session: &mut Session, status: &Arc<Mutex<Status>>) -> bool {
     }
 }
 
-fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>) {
+fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>, config: &Config) {
     let old = std::mem::replace(session, Session::None);
     match old {
         Session::None => {}
@@ -543,7 +614,7 @@ fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>) {
                 }
             }
         }
-        Session::Recording { cap, frames, mut enc, path, mut audio, .. } => {
+        Session::Recording { cap, frames, mut enc, path, mut audio, started, started_utc, cfg, .. } => {
             let _ = cap.stop();
             drain(&frames, &mut enc);
             // Stop audio before the final drain, or the loop chases a stream
@@ -561,6 +632,17 @@ fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>) {
             if let Err(e) = enc.finish() {
                 set_error(status, &format!("finalising recording failed: {e}"));
             }
+            // Sidecar after finish(), so the byte count is the finished file's.
+            write_sidecar(
+                &path,
+                &started_utc,
+                started.elapsed().as_secs_f64(),
+                &cfg,
+                &audio,
+                config,
+                crate::vod::RecordingKind::Recording,
+                status,
+            );
             let mut s = status.lock().unwrap();
             s.last_clip = Some(path.to_string_lossy().to_string());
             s.recording_path = None;
