@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DEBRIEF — VOD Review</title>
+<link rel="stylesheet" href="review.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span><h1>DEBRIEF</h1><span class="sub">VOD review</span></div>
+    <nav><a href="index.html">Match analyzer</a><a href="planner.html">Planner</a></nav>
+  </header>
+
+  <main class="layout">
+    <aside class="rail">
+      <section class="add">
+        <h2>Add a VOD</h2>
+        <input id="url" type="url" placeholder="Paste a YouTube link" autocomplete="off" />
+        <div class="two">
+          <input id="who" type="text" placeholder="Whose POV" autocomplete="off" />
+          <input id="label" type="text" placeholder="Ascent, 13–11" autocomplete="off" />
+        </div>
+        <button id="add" class="primary">Add</button>
+        <p id="addErr" class="err hidden"></p>
+      </section>
+
+      <section class="list">
+        <h2>VODs</h2>
+        <ul id="vodList"></ul>
+        <p id="empty" class="muted small">Nothing yet. Paste a YouTube link above.</p>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <div id="playerWrap" class="playerwrap">
+        <div id="player"></div>
+        <div id="noPlayer" class="noplayer">
+          <p>Pick a VOD to start reviewing.</p>
+        </div>
+      </div>
+
+      <div id="nowPlaying" class="nowplaying hidden">
+        <div>
+          <strong id="npLabel"></strong>
+          <span id="npWho" class="muted"></span>
+        </div>
+        <button id="del" class="ghost" title="Remove this VOD from the list">Remove</button>
+      </div>
+
+      <div id="commentBar" class="commentbar hidden">
+        <span id="atTime" class="at">0:00</span>
+        <input id="author" class="author" type="text" placeholder="You" autocomplete="off" />
+        <input id="body" class="body" type="text" placeholder="Comment at this timestamp — Enter to post" autocomplete="off" />
+        <button id="post" class="primary">Post</button>
+      </div>
+      <p class="muted small hint" id="hint"></p>
+    </section>
+
+    <aside class="notes">
+      <h2>Comments</h2>
+      <ul id="comments"></ul>
+      <p id="noComments" class="muted small">No comments on this VOD yet.</p>
+    </aside>
+  </main>
+
+  <script src="review.js"></script>
+</body>
+</html>

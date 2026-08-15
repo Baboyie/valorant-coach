@@ -206,6 +206,24 @@ app.get('/api/vod/:id/video', async (req, res) => {
   fs.createReadStream(file, { start, end }).pipe(res);
 });
 
+/* --------------------------------------------------------- youtube VODs */
+
+app.get('/api/youtube', async (_req, res) => {
+  res.json({ videos: await vods.readYouTube(DATA_DIR) });
+});
+
+app.post('/api/youtube', async (req, res) => {
+  try {
+    res.json(await vods.addYouTube(DATA_DIR, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/youtube/:id', async (req, res) => {
+  res.json({ removed: await vods.removeYouTube(DATA_DIR, req.params.id) });
+});
+
 /* -------------------------------------------------------------- comments */
 
 app.get('/api/match/:matchId/comments', async (req, res) => {

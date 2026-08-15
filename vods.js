@@ -172,7 +172,91 @@ async function deleteComment(baseDir, matchId, commentId) {
   return list.length !== next.length;
 }
 
+/* --------------------------------------------------------- youtube VODs */
+
+// A registered YouTube video: the team uploads wherever they like and hands us
+// a link. No OAuth, no API quota, no upload code, and YouTube does the
+// transcoding, seeking and CDN work that would otherwise be ours.
+//
+// The app stores only the video id and what the team says about it. Nothing
+// here fetches from YouTube — the embed player does that in the browser.
+
+function youtubeIndexPath(baseDir) {
+  return path.join(vodRoot(baseDir), 'youtube.json');
+}
+
+/**
+ * Pull the 11-character video id out of whatever form of link someone pastes.
+ *
+ * People paste watch URLs, share links, embeds, links with a timestamp, or
+ * just the bare id. Accepting only one shape would make this feel broken for
+ * no reason.
+ */
+function parseYouTubeId(input) {
+  if (typeof input !== 'string') return null;
+  const s = input.trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+  const patterns = [
+    /[?&]v=([A-Za-z0-9_-]{11})/,      // watch?v=ID
+    /youtu\.be\/([A-Za-z0-9_-]{11})/,  // youtu.be/ID
+    /\/embed\/([A-Za-z0-9_-]{11})/,    // /embed/ID
+    /\/shorts\/([A-Za-z0-9_-]{11})/,   // /shorts/ID
+    /\/live\/([A-Za-z0-9_-]{11})/,     // /live/ID
+  ];
+  for (const re of patterns) {
+    const m = re.exec(s);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+async function readYouTube(baseDir) {
+  try {
+    return JSON.parse(await fsp.readFile(youtubeIndexPath(baseDir), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+async function addYouTube(baseDir, entry) {
+  const videoId = parseYouTubeId(entry.url || entry.videoId);
+  if (!videoId) throw new Error('Could not find a YouTube video id in that link.');
+
+  const list = await readYouTube(baseDir);
+  // Re-registering the same video updates it rather than creating a duplicate,
+  // so a fixed typo in a player name does not leave two entries behind.
+  const existing = list.find((v) => v.videoId === videoId);
+  const record = {
+    id: existing ? existing.id : newId(),
+    videoId,
+    title: String(entry.title || '').slice(0, 200),
+    player: String(entry.player || '').slice(0, 64),
+    // Free text: "Ascent, 13-11" is more use to a team than a match id they
+    // would have to look up.
+    label: String(entry.label || '').slice(0, 200),
+    addedUtc: existing ? existing.addedUtc : new Date().toISOString(),
+    source: 'youtube',
+  };
+  const next = existing
+    ? list.map((v) => (v.videoId === videoId ? record : v))
+    : [record, ...list];
+  await fsp.mkdir(vodRoot(baseDir), { recursive: true });
+  await fsp.writeFile(youtubeIndexPath(baseDir), JSON.stringify(next, null, 2));
+  return record;
+}
+
+async function removeYouTube(baseDir, id) {
+  const list = await readYouTube(baseDir);
+  const next = list.filter((v) => v.id !== id);
+  await fsp.writeFile(youtubeIndexPath(baseDir), JSON.stringify(next, null, 2));
+  return list.length !== next.length;
+}
+
 module.exports = {
+  parseYouTubeId,
+  readYouTube,
+  addYouTube,
+  removeYouTube,
   vodRoot,
   ensureDirs,
   safeId,

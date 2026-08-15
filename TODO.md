@@ -13,7 +13,40 @@ repeated anywhere. `recorder-proto record --no-audio` reproduces the original
 video-only configuration for comparison. This needs a play session — see
 `bench/README.md`.
 
-## 2. Team VOD reviewer
+## 2. Team VOD reviewer — first version built
+
+`public/review.html`. Paste a YouTube link, pick whose POV it is, watch it,
+comment at timestamps. Comments jump the player when clicked.
+
+Two decisions worth remembering, both of which removed most of the work:
+
+- **No synchronised playback.** The team watches together over Discord
+  screenshare, so a shared playhead would have bought nothing for the cost of a
+  WebSocket server and session management.
+- **No frame-accurate multi-POV alignment.** Comments are pinned to a position
+  in one video rather than to a shared match timeline. The recorder still writes
+  the UTC start time in its sidecar, and `vods.js` still groups recordings into
+  matches by overlapping wall clock, so precise alignment remains available if
+  it is ever wanted — it just is not required for this to be useful.
+
+**YouTube hosting**, chosen over self-hosting: no storage cost, no transcoding,
+no CDN, and seeking works. The `videos.insert` API quota turned out *not* to be
+the blocker expected — since the June 2026 granular-quota change it has its own
+100 uploads/day bucket rather than drawing 1600 units from the shared 10,000 —
+but registering a pasted URL avoids OAuth, token refresh and Google verification
+entirely, so automatic upload was not worth building yet.
+
+Self-hosted upload (`POST /api/vod`, range-request streaming, match grouping)
+stays in the server for VODs a team would rather not put on YouTube.
+
+Still open:
+
+- Automatic upload from the desktop app (needs OAuth per teammate).
+- Comments are per-video; a comment does not appear on a teammate's POV of the
+  same moment. Would need the match grouping to be wired into the review page.
+- No auth on the server — a LAN or private VPS is the trust boundary.
+
+## 2b. Team VOD reviewer — original scoping notes
 
 Review clips and match VODs as a team, rather than alone.
 
