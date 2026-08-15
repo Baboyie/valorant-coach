@@ -57,6 +57,47 @@ fn h264_output_type(cfg: &EncoderConfig) -> Result<IMFMediaType> {
     }
 }
 
+/// What lands in the file for audio: AAC-LC.
+///
+/// 128 kbps stereo. Voice comms and game audio for review do not benefit from
+/// more, and the encoder cost is charged to the CPU, which §2 wants left alone.
+fn aac_output_type(fmt: &crate::audio::AudioFormat) -> Result<IMFMediaType> {
+    unsafe {
+        let t: IMFMediaType = MFCreateMediaType()?;
+        t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
+        t.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_AAC)?;
+        t.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
+        t.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, fmt.sample_rate)?;
+        t.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, fmt.channels as u32)?;
+        t.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 16_000)?;
+        // 0 = raw AAC in the container, which is what MP4 wants. The ADTS
+        // variants are for streaming and would produce a file most players
+        // handle badly.
+        t.SetUINT32(&MF_MT_AAC_PAYLOAD_TYPE, 0)?;
+        Ok(t)
+    }
+}
+
+/// What we hand the encoder: the interleaved 16-bit PCM `audio.rs` produces.
+fn pcm_input_type(fmt: &crate::audio::AudioFormat) -> Result<IMFMediaType> {
+    let block_align = fmt.channels as u32 * 2; // 16-bit
+    unsafe {
+        let t: IMFMediaType = MFCreateMediaType()?;
+        t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
+        t.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM)?;
+        t.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
+        t.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, fmt.sample_rate)?;
+        t.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, fmt.channels as u32)?;
+        t.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, block_align)?;
+        t.SetUINT32(
+            &MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
+            fmt.sample_rate * block_align,
+        )?;
+        t.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1)?;
+        Ok(t)
+    }
+}
+
 /// The input type: exactly what WGC produced. Declaring BGRA here rather than
 /// converting ourselves is what lets the GPU video processor do the NV12
 /// conversion on our behalf.
@@ -108,19 +149,46 @@ pub struct Encoder {
     // Present on the replay path: the grabber's media sink, kept so it can be
     // shut down explicitly at finish.
     media_sink: Option<IMFMediaSink>,
+    /// Audio stream index, when this encoder was built with sound.
+    audio_stream: Option<u32>,
+    audio_block_align: u32,
+    audio_bytes_per_sec: u32,
     first_ts: Option<i64>,
     nominal_duration: i64,
     pub frames_written: u64,
+    pub audio_written: u64,
 }
 
 impl Encoder {
     /// Encode straight into an MP4 file (the `record` command).
-    pub fn to_file(dev: &d3d::Device, path: &str, cfg: &EncoderConfig) -> Result<Encoder> {
+    ///
+    /// `audio_fmt` adds a second AAC stream. Passing `None` keeps the file
+    /// video-only, which is what the benchmark path wants: §9's overhead result
+    /// was measured without an audio encode and stays comparable only if the
+    /// benchmark keeps running the same way.
+    pub fn to_file(
+        dev: &d3d::Device,
+        path: &str,
+        cfg: &EncoderConfig,
+        audio_fmt: Option<&crate::audio::AudioFormat>,
+    ) -> Result<Encoder> {
         let (manager, attrs) = writer_attrs(dev)?;
         let writer = unsafe { MFCreateSinkWriterFromURL(&HSTRING::from(path), None, &attrs)? };
         let stream = unsafe { writer.AddStream(&h264_output_type(cfg)?)? };
         unsafe { writer.SetInputMediaType(stream, &argb_input_type(cfg)?, None)? };
         configure_codec(&writer, stream);
+
+        let mut audio_stream = None;
+        let mut audio_block_align = 0;
+        let mut audio_bytes_per_sec = 0;
+        if let Some(fmt) = audio_fmt {
+            let a = unsafe { writer.AddStream(&aac_output_type(fmt)?)? };
+            unsafe { writer.SetInputMediaType(a, &pcm_input_type(fmt)?, None)? };
+            audio_stream = Some(a);
+            audio_block_align = fmt.channels as u32 * 2;
+            audio_bytes_per_sec = fmt.sample_rate * audio_block_align;
+        }
+
         unsafe { writer.BeginWriting()? };
 
         Ok(Encoder {
@@ -128,9 +196,13 @@ impl Encoder {
             stream,
             _dxgi_manager: manager,
             media_sink: None,
+            audio_stream,
+            audio_block_align,
+            audio_bytes_per_sec,
             first_ts: None,
             nominal_duration: if cfg.fps > 0 { 10_000_000 / cfg.fps as i64 } else { 166_666 },
             frames_written: 0,
+            audio_written: 0,
         })
     }
 
@@ -170,10 +242,72 @@ impl Encoder {
             stream,
             _dxgi_manager: manager,
             media_sink: Some(sink),
+            // The grabber sink carries exactly one stream, so audio cannot ride
+            // along here. The replay path gets sound from a second, parallel
+            // encoder writing into the same ring — see `AudioEncoder`.
+            audio_stream: None,
+            audio_block_align: 0,
+            audio_bytes_per_sec: 0,
             first_ts: None,
             nominal_duration: if cfg.fps > 0 { 10_000_000 / cfg.fps as i64 } else { 166_666 },
             frames_written: 0,
+            audio_written: 0,
         })
+    }
+
+    /// Submit one packet of PCM.
+    ///
+    /// `ts_100ns` is WASAPI's QPC position, which shares its origin with WGC's
+    /// `SystemRelativeTime` — both are QueryPerformanceCounter in 100 ns units.
+    /// Rebasing both against the *video* first frame is what puts sound and
+    /// picture on one timeline; using each stream's own first sample instead
+    /// would silently shift audio by however long the encoder took to start.
+    pub fn write_audio(&mut self, pcm: &[i16], ts_100ns: i64) -> Result<()> {
+        let Some(stream) = self.audio_stream else {
+            return Ok(());
+        };
+        if pcm.is_empty() {
+            return Ok(());
+        }
+        // Audio arriving before the first video frame has nowhere to sit on the
+        // timeline; dropping it costs a few milliseconds of lead-in and avoids
+        // negative sample times, which the sink writer rejects.
+        let Some(base) = self.first_ts else {
+            return Ok(());
+        };
+        let rel = ts_100ns - base;
+        if rel < 0 {
+            return Ok(());
+        }
+
+        let bytes = pcm.len() * 2;
+        let buffer: IMFMediaBuffer = unsafe { MFCreateMemoryBuffer(bytes as u32)? };
+        unsafe {
+            let mut dst: *mut u8 = std::ptr::null_mut();
+            buffer.Lock(&mut dst, None, None)?;
+            std::ptr::copy_nonoverlapping(pcm.as_ptr() as *const u8, dst, bytes);
+            buffer.Unlock()?;
+            buffer.SetCurrentLength(bytes as u32)?;
+        }
+
+        // Duration from the byte count and the format, not from a nominal
+        // packet size — WASAPI packets vary in length.
+        let duration = if self.audio_bytes_per_sec > 0 {
+            (bytes as i64 * 10_000_000) / self.audio_bytes_per_sec as i64
+        } else {
+            0
+        };
+
+        let sample: IMFSample = unsafe { MFCreateSample()? };
+        unsafe {
+            sample.AddBuffer(&buffer)?;
+            sample.SetSampleTime(rel)?;
+            sample.SetSampleDuration(duration)?;
+            self.writer.WriteSample(stream, &sample)?;
+        }
+        self.audio_written += 1;
+        let _ = self.audio_block_align;
+        Ok(())
     }
 
     /// Submit one captured frame.

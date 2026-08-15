@@ -10,7 +10,7 @@
 //!   recorder-proto replay  [window] [fps] [out.mp4] encode into a memory ring,
 //!                                            then save the last [window] secs
 
-use recorder_core::{capture, d3d, encoder, encoders, replay};
+use recorder_core::{audio, capture, d3d, encoder, encoders, replay};
 
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -34,9 +34,10 @@ fn main() -> Result<()> {
         "capture" => cmd_capture(),
         "record" => cmd_record(),
         "replay" => cmd_replay(),
+        "audio" => cmd_audio(),
         other => {
             eprintln!(
-                "unknown command: {other}\n\nusage: recorder-proto [probe|capture|record|replay]"
+                "unknown command: {other}\n\nusage: recorder-proto [probe|capture|record|replay|audio]"
             );
             Ok(())
         }
@@ -246,8 +247,34 @@ fn cmd_record() -> Result<()> {
     println!("output : {out}");
     println!("format : {w}x{h} @ {fps} fps, {:.1} Mbps H.264\n", bitrate as f64 / 1e6);
 
+    // `--no-audio` keeps the benchmark path exactly as §9 measured it: that
+    // result was video-only, and an audio encode would make new runs
+    // incomparable with the recorded table.
+    let want_audio = !std::env::args().any(|a| a == "--no-audio");
+    let mut audio_cap = None;
+    let mut audio_rx = None;
+    if want_audio {
+        match audio::AudioCapture::start() {
+            Ok((c, rx)) => {
+                println!(
+                    "audio  : {} Hz, {} ch (device {} ch)",
+                    c.format.sample_rate, c.format.channels, c.format.device_channels
+                );
+                audio_cap = Some(c);
+                audio_rx = Some(rx);
+            }
+            // Losing sound must not lose the recording.
+            Err(e) => eprintln!("audio unavailable, recording video only: {e}"),
+        }
+    }
+
     let cfg = encoder::EncoderConfig { width: w, height: h, fps, bitrate };
-    let mut enc = encoder::Encoder::to_file(&dev, &out, &cfg)?;
+    let mut enc = encoder::Encoder::to_file(
+        &dev,
+        &out,
+        &cfg,
+        audio_cap.as_ref().map(|c| &c.format),
+    )?;
 
     // Only now: the encoder exists, so the first captured frame has somewhere to
     // go. Starting capture any earlier spends the ring on sink-writer init.
@@ -261,6 +288,11 @@ fn cmd_record() -> Result<()> {
     while Instant::now() < deadline {
         if let Ok(true) = cap.poll_resize() {
             println!("  (capture target resized; frame pool rebuilt, recording continues)");
+        }
+        if let Some(rx) = &audio_rx {
+            while let Ok(chunk) = rx.try_recv() {
+                enc.write_audio(&chunk.pcm, chunk.ts_100ns)?;
+            }
         }
         match frames.full_rx.recv_timeout(Duration::from_millis(100)) {
             Ok((slot, ts)) => {
@@ -285,14 +317,30 @@ fn cmd_record() -> Result<()> {
         let _ = frames.free_tx.send(slot);
         submitted += 1;
     }
+    // Stop audio before draining it, or the loop chases a stream that is still
+    // being fed and never ends.
+    if let Some(c) = &mut audio_cap {
+        c.stop();
+    }
+    if let Some(rx) = &audio_rx {
+        while let Ok(chunk) = rx.try_recv() {
+            let _ = enc.write_audio(&chunk.pcm, chunk.ts_100ns);
+        }
+    }
 
     let written = enc.frames_written;
+    let audio_written = enc.audio_written;
     enc.finish()?;
 
     print_capture_stats(&cap.stats, secs);
     println!();
     println!("frames submitted to encoder    : {submitted}");
     println!("frames accepted                : {written}");
+    if let Some(c) = &audio_cap {
+        println!("audio packets encoded          : {audio_written}");
+        println!("audio discontinuities          : {}",
+                 c.stats.discontinuities.load(Ordering::Relaxed));
+    }
     if submitted > 0 {
         println!("encode submit  mean : {:>6.1} us", encode_ns_total as f64 / submitted as f64 / 1000.0);
         println!("               max  : {:>6.1} us", encode_ns_max as f64 / 1000.0);
@@ -304,6 +352,85 @@ fn cmd_record() -> Result<()> {
     }
     print_provenance(&dev);
     Ok(())
+}
+
+/* ------------------------------------------------------------------- audio */
+
+/// Desktop audio capture on its own, before it is wired to an encoder.
+///
+/// Proving a stage in isolation is the same discipline capture got: a bad
+/// number later can then be attributed rather than guessed at. The figure that
+/// matters here is **peak level** — packet counts prove the plumbing runs,
+/// but only a non-zero peak proves we are capturing what the speakers are
+/// playing rather than a well-formed stream of silence.
+fn cmd_audio() -> Result<()> {
+    let secs: u64 = arg(2).and_then(|s| s.parse().ok()).unwrap_or(10);
+
+    let (cap, rx) = audio::AudioCapture::start()?;
+    println!(
+        "device : {} Hz, {} channels (emitting {} — downmixed if needed)",
+        cap.format.sample_rate, cap.format.device_channels, cap.format.channels
+    );
+    println!("run    : {secs}s — play something so there is audio to capture\n");
+
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    let mut peak: i32 = 0;
+    let mut sum_sq: f64 = 0.0;
+    let mut samples: u64 = 0;
+    let mut first_ts: Option<i64> = None;
+    let mut last_ts: i64 = 0;
+
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(chunk) => {
+                if first_ts.is_none() {
+                    first_ts = Some(chunk.ts_100ns);
+                }
+                last_ts = chunk.ts_100ns;
+                for s in &chunk.pcm {
+                    let a = (*s as i32).abs();
+                    if a > peak {
+                        peak = a;
+                    }
+                    sum_sq += (*s as f64) * (*s as f64);
+                    samples += 1;
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    let packets = cap.stats.packets.load(Ordering::Relaxed);
+    let frames = cap.stats.frames.load(Ordering::Relaxed);
+    let discontinuities = cap.stats.discontinuities.load(Ordering::Relaxed);
+    let silent = cap.stats.silent.load(Ordering::Relaxed);
+    drop(cap);
+
+    let span = match first_ts {
+        Some(f) => (last_ts - f) as f64 / 1e7,
+        None => 0.0,
+    };
+    let rms = if samples > 0 { (sum_sq / samples as f64).sqrt() } else { 0.0 };
+
+    println!("packets          : {packets}  ({frames} frames)");
+    println!("discontinuities  : {discontinuities}");
+    println!("silent packets   : {silent}");
+    println!("samples captured : {samples}");
+    println!("timestamp span   : {span:.2}s over a {secs}s run");
+    println!("peak level       : {peak} / 32767  ({:.1} dBFS)", dbfs(peak as f64));
+    println!("rms level        : {rms:.0} / 32767  ({:.1} dBFS)", dbfs(rms));
+    if peak == 0 {
+        println!("\nNOTHING WAS PLAYING — the stream is well-formed but silent.");
+        println!("Loopback captures what the default output device renders, so play");
+        println!("audio and re-run before concluding anything about the capture path.");
+    }
+    Ok(())
+}
+
+fn dbfs(v: f64) -> f64 {
+    if v <= 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    20.0 * (v / 32767.0).log10()
 }
 
 /* ------------------------------------------------------------------ replay */

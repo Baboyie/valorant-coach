@@ -12,6 +12,7 @@
 //! the prototype: nothing in this crate knows about a UI, and the capture
 //! callback never blocks, allocates, or waits on anything downstream.
 
+pub mod audio;
 pub mod capture;
 pub mod d3d;
 pub mod encoder;
