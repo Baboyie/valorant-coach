@@ -16,6 +16,9 @@ target/
 # tauri generated
 recorder-app/src-tauri/gen/
 
+# uploaded VODs — a single match is ~24 GB across a 5-stack
+data/
+
 # logs and local scratch
 *.log
 *.zip

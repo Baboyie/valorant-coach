@@ -1,10 +1,17 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const vods = require('./vods');
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Where uploaded POVs live. Configurable because the whole point of
+// self-hosting is putting 24 GB per match on a drive that has room for it.
+const DATA_DIR = process.env.DEBRIEF_DATA_DIR || path.join(__dirname, 'data');
 
 // Only ever forward to Riot's own API hosts — never an arbitrary URL.
 const RIOT_HOST_RE = /^[a-z0-9-]+\.api\.riotgames\.com$/i;
@@ -112,9 +119,118 @@ app.post('/api/coach', async (req, res) => {
   }
 });
 
+/* ------------------------------------------------------------------ VODs */
+
+// POST /api/vod  — upload one POV.
+// Headers: X-Vod-Meta = URL-encoded JSON sidecar. Body = raw mp4 bytes.
+//
+// Streamed straight to disk rather than buffered: these are 40 MB clips and
+// multi-gigabyte match recordings, and holding one in memory would put the
+// server's footprint at the mercy of the largest thing anyone records.
+app.post('/api/vod', async (req, res) => {
+  let meta;
+  try {
+    meta = JSON.parse(decodeURIComponent(req.get('x-vod-meta') || ''));
+  } catch {
+    return res.status(400).json({ error: 'Missing or invalid X-Vod-Meta header.' });
+  }
+  if (!Number.isFinite(meta.started_epoch_ms) || !Number.isFinite(meta.duration_secs)) {
+    // Without an absolute start time a POV cannot be aligned with anyone
+    // else's, which makes it useless for the only thing this server is for.
+    return res
+      .status(400)
+      .json({ error: 'Sidecar needs started_epoch_ms and duration_secs.' });
+  }
+
+  const id = vods.newId();
+  const dir = path.join(vods.vodRoot(DATA_DIR), id);
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
+
+  const target = path.join(dir, 'video.mp4');
+  const out = fs.createWriteStream(target);
+  req.pipe(out);
+
+  out.on('finish', () => res.json({ id, bytes: out.bytesWritten }));
+  out.on('error', (e) => {
+    // Leave meta.json behind: the listing marks the VOD incomplete, which is
+    // how a teammate finds out their upload failed rather than silently
+    // missing from the review.
+    res.status(500).json({ error: 'Write failed: ' + e.message });
+  });
+});
+
+// GET /api/matches — every POV, grouped into matches by overlapping time.
+app.get('/api/matches', async (_req, res) => {
+  try {
+    const all = await vods.listVods(DATA_DIR);
+    res.json({ matches: vods.groupIntoMatches(all).reverse() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/vod/:id/video — stream a POV, with range support so the review
+// page can seek without downloading gigabytes first.
+app.get('/api/vod/:id/video', async (req, res) => {
+  const { id } = req.params;
+  if (!vods.safeId(id)) return res.status(400).end();
+  const file = path.join(vods.vodRoot(DATA_DIR), id, 'video.mp4');
+
+  let stat;
+  try {
+    stat = await fsp.stat(file);
+  } catch {
+    return res.status(404).json({ error: 'No such VOD.' });
+  }
+
+  const range = req.headers.range;
+  if (!range) {
+    res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes' });
+    return fs.createReadStream(file).pipe(res);
+  }
+  // Range requests are what make scrubbing feel instant; without them a
+  // browser refuses to seek past what it has already downloaded.
+  const m = /bytes=(\d*)-(\d*)/.exec(range);
+  const start = m && m[1] ? parseInt(m[1], 10) : 0;
+  const end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
+  if (start >= stat.size || end >= stat.size || start > end) {
+    return res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` }).end();
+  }
+  res.writeHead(206, {
+    'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+    'Accept-Ranges': 'bytes',
+    'Content-Length': end - start + 1,
+    'Content-Type': 'video/mp4',
+  });
+  fs.createReadStream(file, { start, end }).pipe(res);
+});
+
+/* -------------------------------------------------------------- comments */
+
+app.get('/api/match/:matchId/comments', async (req, res) => {
+  res.json({ comments: await vods.readComments(DATA_DIR, req.params.matchId) });
+});
+
+app.post('/api/match/:matchId/comments', async (req, res) => {
+  try {
+    res.json(await vods.addComment(DATA_DIR, req.params.matchId, req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/match/:matchId/comments/:id', async (req, res) => {
+  const removed = await vods.deleteComment(DATA_DIR, req.params.matchId, req.params.id);
+  res.json({ removed });
+});
+
 const PORT = process.env.PORT || 8787;
+vods.ensureDirs(DATA_DIR).catch((e) => console.error('could not create data dir:', e.message));
+
 app.listen(PORT, () => {
   console.log(`DEBRIEF server running at http://localhost:${PORT}`);
+  console.log(`VOD storage: ${vods.vodRoot(DATA_DIR)}`);
   if (!process.env.ANTHROPIC_API_KEY) {
     console.warn('WARNING: ANTHROPIC_API_KEY not set — coach reports will fail. Copy .env.example to .env and fill it in.');
   }
