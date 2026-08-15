@@ -158,6 +158,21 @@ pub fn run() {
     let engine = Engine::spawn(cfg.clone());
 
     tauri::Builder::default()
+        // Must be first, per the plugin's own requirement.
+        //
+        // A second instance is not a harmless duplicate. It opens its own
+        // capture session and its own NVENC encoder against the same game, so
+        // encode load doubles — and the measured 15.3% encoder cost, which the
+        // "no measurable FPS impact" claim rests on, is a figure for *one*
+        // recorder. The visible symptom is milder and misleading: the second
+        // process cannot claim the global hotkey, so Alt+F10 silently does
+        // nothing while both copies quietly compete for the encoder.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // Launching again is a request to see the app, not to start
+            // another one — most often clicking the shortcut having forgotten
+            // it is already in the tray.
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(

@@ -124,6 +124,45 @@ code-signed, which reinforces ADR §1's conclusion that this must ship as a sign
 MSIX package — that requirement now has a second, independent justification
 beyond removing the WGC capture border.
 
+### Smart App Control now blocks the built app itself (2026-08-15)
+
+Moving the target directory off OneDrive fixed the *build*. It does not fix the
+*output*. On this rig, with SAC enforcing
+(`HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy` →
+`VerifiedAndReputablePolicyState = 1`), a freshly linked `recorder-app.exe` is
+refused:
+
+```
+Start-Process : This command cannot be run due to the error:
+An Application Control policy has blocked this file.
+```
+
+What is confusing, and worth writing down so the next person does not chase it:
+
+- The file has **no** Mark-of-the-Web, so this is not the OneDrive problem.
+- Build-script executables linked minutes earlier ran fine, so it is not a
+  blanket refusal of everything newly compiled.
+- `recorder-proto.exe` from earlier the same day still runs. SAC's verdicts are
+  reputation-based and per-file, and it had already blessed that one.
+
+So it is not predictable from the build, and **a working unsigned binary is a
+scarce resource**: rebuilding overwrites it via cargo's hardlink and there is no
+way back, since the previous artifact in `deps/` is replaced too. Copy a known
+good `recorder-app.exe` somewhere else before rebuilding if you need to keep the
+ability to record that day.
+
+There are only two real fixes, and neither is free:
+
+1. **Turn Smart App Control off.** Windows Security → App & browser control →
+   Smart App Control → Off. This is **irreversible** — re-enabling it requires
+   reinstalling Windows — and it lowers the machine's protection generally.
+2. **Sign the binary** with a certificate from a CA that SAC trusts. Self-signed
+   certificates do not work, however they are installed locally: SAC ignores
+   additions to the local trust store by design.
+
+Meanwhile `recorder-proto` (`probe|capture|record|replay|audio`) still runs and
+records full matches, which is what gets uploaded anyway.
+
 ## Known gaps
 
 - Not code-signed, so Smart App Control blocks it on machines that enforce it.
