@@ -51,6 +51,10 @@ pub enum State {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Status {
     pub state: State,
+    /// §17's monitor. None until the first interval has elapsed — every figure
+    /// in it is a delta, and inventing a first value is exactly what §17
+    /// forbids.
+    pub perf: Option<crate::sysmon::PerfSample>,
     pub game_running: bool,
     pub buffered_secs: f64,
     pub ring_mb: f64,
@@ -69,6 +73,7 @@ impl Default for Status {
     fn default() -> Self {
         Status {
             state: State::Idle,
+            perf: None,
             game_running: false,
             buffered_secs: 0.0,
             ring_mb: 0.0,
@@ -167,6 +172,12 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
     }
 
     let mut session = Session::None;
+    // §17's monitor, sampled at 1 Hz off this same loop. Cheap process- and
+    // adapter-level queries; a monitor that showed overhead by adding overhead
+    // would defeat itself.
+    let mut sysmon = crate::sysmon::SysMon::new();
+    let mut adapter: Option<windows::Win32::Graphics::Dxgi::IDXGIAdapter3> = None;
+    let mut next_perf = Instant::now() + Duration::from_secs(1);
     // Game detection is a window-class lookup, not a process-table scan, and it
     // only runs while we are not capturing — exactly ADR §4's fallback path.
     // The SetWinEventHook version §4 specifies as primary needs a message pump
@@ -197,8 +208,9 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
                 // Game appeared and we should be buffering.
                 (Session::None, Some(h)) if config.auto_buffer => {
                     match start_buffering(h, &config) {
-                        Ok(new) => {
+                        Ok((new, adapter3)) => {
                             session = new;
+                            adapter = adapter3;
                             clear_error(&status);
                         }
                         Err(e) => {
@@ -215,6 +227,14 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
                     teardown(&mut session, &status);
                 }
                 _ => {}
+            }
+        }
+
+        // ---- performance monitor --------------------------------------
+        if Instant::now() >= next_perf {
+            next_perf = Instant::now() + Duration::from_secs(1);
+            if let Some(p) = sysmon.sample(adapter.as_ref()) {
+                status.lock().unwrap().perf = Some(p);
             }
         }
 
@@ -324,8 +344,14 @@ fn find_target() -> Option<windows::Win32::Foundation::HWND> {
     capture::find_valorant()
 }
 
-fn start_buffering(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> windows::core::Result<Session> {
+/// Returns the session and the adapter it runs on, so the §17 monitor can read
+/// VRAM from the same device the pipeline uses rather than guessing which GPU.
+fn start_buffering(
+    hwnd: windows::Win32::Foundation::HWND,
+    config: &Config,
+) -> windows::core::Result<(Session, Option<windows::Win32::Graphics::Dxgi::IDXGIAdapter3>)> {
     let dev = d3d::Device::new()?;
+    let adapter = dev.adapter3().ok();
     let (cap, frames) = capture::Capture::for_window(&dev, hwnd, config.fps, 6)?;
     let w = cap.size.Width as u32;
     let h = cap.size.Height as u32;
@@ -367,7 +393,10 @@ fn start_buffering(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> w
     };
 
     cap.start()?;
-    Ok(Session::Buffering { cap, frames, enc, ring, cfg, audio, video_base: None })
+    Ok((
+        Session::Buffering { cap, frames, enc, ring, cfg, audio, video_base: None },
+        adapter,
+    ))
 }
 
 fn start_recording(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> windows::core::Result<Session> {

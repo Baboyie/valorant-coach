@@ -46,6 +46,17 @@ async function tick() {
       Math.min(100, (s.buffered_secs / target) * 100).toFixed(1) + "%";
   }
 
+  // §17: never fake these. The engine sends null until it has a real delta,
+  // and an em dash is the honest rendering of "not measured yet".
+  const p = s.perf;
+  el("cpu").textContent = p ? p.cpu_pct.toFixed(2) + " %" : "—";
+  el("ram").textContent = p ? p.ram_mb.toFixed(0) + " MB" : "—";
+  el("vram").textContent =
+    p && p.vram_mb != null
+      ? `${p.vram_mb.toFixed(0)} MB of ${p.vram_budget_mb.toFixed(0)}`
+      : "—";
+  el("disk").textContent = p ? p.disk_write_mbps.toFixed(1) + " MB/s" : "—";
+
   el("kept").textContent = s.frames_kept.toLocaleString();
   el("p99").textContent = s.callback_p99_us ? s.callback_p99_us + " µs" : "—";
   el("dropfull").textContent = s.dropped_ring_full.toLocaleString();

@@ -111,4 +111,6 @@ input:focus { outline: none; border-color: var(--accent); }
   font-size: 13px;
 }
 
+.note { margin: 10px 0 0; line-height: 1.4; }
+
 footer { text-align: center; margin-top: 4px; }

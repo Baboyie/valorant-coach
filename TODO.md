@@ -43,16 +43,19 @@ Read that strand before designing anything new.
 Full audit in [`docs/REQUIREMENTS-STATUS.md`](docs/REQUIREMENTS-STATUS.md). The
 three that matter, in order:
 
-- **ShadowPlay comparison (§18, §29).** The benchmark harness is rigorous but has
-  only baseline × ours. §30's entire positioning — "comparable to or better than
-  ShadowPlay" — is unproven without that column, and §1 forbids claiming it
-  unmeasured. Needs NVIDIA app installed and a play session; `Measure-Frames.ps1`
-  already recognises `shadowplay-run*` filenames, so it is running the runs, not
-  changing the analysis.
-- **In-app performance monitor (§17).** The app shows the recorder's health but
-  not the player's: no game FPS, frame time, CPU %, GPU %, VRAM, encoder
-  utilisation, or disk write speed. This is the screen that makes the product's
-  claim visible to the user mid-match, and §17 specifies it concretely.
+- ~~ShadowPlay performance comparison (§18, §29).~~ **Deliberately skipped.** The
+  only consequence: no comparative claim ships, per §29's own rule. The measured
+  claim — no measurable FPS cost at a 240 cap — stands on its own and needs no
+  competitor. Output quality *was* matched against real ShadowPlay clips (ADR
+  §9c). If it is ever wanted, `Measure-Frames.ps1` already recognises
+  `shadowplay-run*` filenames, so it is running the runs, not writing code.
+- **In-app performance monitor (§17)** — mostly done. Recorder CPU, RAM, VRAM and
+  disk write rate are live in the app alongside capture health. **Game FPS and
+  frame time are still missing**: reading them honestly needs an ETW consumer of
+  the kind PresentMon implements, which is a subsystem rather than a call.
+  `bench/` already measures them properly out-of-process, so the gap is the
+  live display, not the capability. §17 says never fake these — an ETW consumer
+  or nothing.
 - **Microphone (§23).** Loopback captures what the player hears, not what they
   say. For a team-review product this is the more valuable half, and it is what
   makes §23's "separate audio tracks" meaningful.

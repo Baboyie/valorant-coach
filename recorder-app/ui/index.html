@@ -31,13 +31,28 @@
   </section>
 
   <section class="panel">
-    <h2>Live</h2>
+    <h2>Recorder overhead</h2>
+    <dl class="stats">
+      <dt>CPU</dt><dd id="cpu">—</dd>
+      <dt>RAM</dt><dd id="ram">—</dd>
+      <dt>VRAM</dt><dd id="vram">—</dd>
+      <dt>Disk write</dt><dd id="disk">—</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>Capture health</h2>
     <dl class="stats">
       <dt>Frames kept</dt><dd id="kept">—</dd>
       <dt>Capture callback p99</dt><dd id="p99">—</dd>
       <dt>Dropped (ring full)</dt><dd id="dropfull">—</dd>
       <dt>Dropped (target resized)</dt><dd id="dropresize">—</dd>
     </dl>
+    <p class="muted small note">
+      Game FPS and frame time are measured out-of-process by the benchmark
+      harness, not here — reading them honestly needs an ETW consumer, and a
+      guessed number would be worse than none.
+    </p>
   </section>
 
   <section class="panel">

@@ -62,7 +62,7 @@ not assertions.
 
 | § | Requirement | Status | Notes |
 |---|---|---|---|
-| 17 | In-app performance monitor | **Partial** | Shows recording FPS (frames kept), capture callback p99, dropped frames by cause, ring occupancy. **Missing: game FPS, frame time, CPU %, GPU %, VRAM, RAM, encoder utilisation, disk write speed.** |
+| 17 | In-app performance monitor | **Partial** | Recorder CPU %, RAM, VRAM (used/budget), disk write rate, recording FPS, capture callback p99, drops by cause, ring occupancy — all read from the OS, never estimated, and rendered as "—" until a real delta exists. **Missing: game FPS and frame time**, which need an ETW consumer; `bench/` measures them properly out-of-process instead. |
 | 18 | Benchmark mode | **Partial** | `bench/` implements the methodology rigorously — but as PowerShell + PresentMon, not in-app, and **without the ShadowPlay and OBS columns** the requirement names. |
 | 19 | Internal profiler | **Partial** | Capture-callback histogram (p50/p99/p99.9), encode submit cost, queue drops by cause, ring allocation counters. Missing disk-queue depth and per-stage latency tracing. |
 | 29 | Acceptance test matrix | **Partial** | Done: 1080p, 60 fps recording, CPU-bound, capped and uncapped, three-plus runs, real report. **Not done: 1440p, 120 fps recording, an explicit GPU-bound configuration, and the ShadowPlay comparison.** |
@@ -82,11 +82,21 @@ distinguishable from the control's own run-to-run spread.
 **Three gaps are worth naming plainly:**
 
 1. **The §29 matrix is a third complete.** 1080p60 CPU-bound is done thoroughly.
-   1440p, 120 fps recording, a GPU-bound configuration, and above all the
-   **ShadowPlay comparison** are not. §18 and §29 both name ShadowPlay
-   explicitly, and §30's positioning depends on it. Until that column exists,
-   "comparable to or better than ShadowPlay" is unproven — and the requirement
-   is emphatic that it must not be claimed.
+   1440p, 120 fps recording and a GPU-bound configuration are not.
+
+   The **ShadowPlay performance column is deliberately skipped** (owner's
+   decision, 2026-08-15). The consequence is narrow but real, and it is §29's
+   own rule rather than an opinion: *"Do not claim 'better than ShadowPlay'
+   until measured."* No comparative claim can ship — not in the app, the README,
+   or any marketing copy.
+
+   What can be said truthfully, because it is measured: **at a 240 fps cap,
+   recording costs no measurable FPS** — every delta inside the control's own
+   run-to-run spread — at ~0.5% of twelve CPU threads and 87 MB. That is a
+   stronger claim than most recorders can evidence, and it needs no competitor.
+
+   Their *output* was compared and matched (§9c): same codec, profile and level,
+   comparable bitrate. Quality parity is evidenced; performance parity is not.
 2. **§17's performance monitor is mostly absent.** The app reports the
    recorder's own health but not the player's — no game FPS, frame time, CPU,
    GPU, or encoder utilisation. This is the requirement's own example UI, and

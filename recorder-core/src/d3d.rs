@@ -73,6 +73,13 @@ impl Device {
         Ok(String::from_utf16_lossy(&desc.Description[..end]))
     }
 
+    /// The adapter this device runs on, for VRAM queries (§17).
+    pub fn adapter3(&self) -> Result<windows::Win32::Graphics::Dxgi::IDXGIAdapter3> {
+        let dxgi: IDXGIDevice = self.device.cast()?;
+        let adapter = unsafe { dxgi.GetAdapter()? };
+        adapter.cast()
+    }
+
     /// The WinRT-flavoured handle to the same device, which is what
     /// `Direct3D11CaptureFramePool` wants.
     pub fn winrt_device(&self) -> Result<IDirect3DDevice> {

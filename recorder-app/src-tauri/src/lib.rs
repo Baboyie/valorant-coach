@@ -6,6 +6,7 @@
 
 mod config;
 mod engine;
+mod sysmon;
 
 use std::sync::Mutex;
 
