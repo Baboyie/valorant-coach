@@ -97,14 +97,25 @@ async function addYouTube(entry) {
   const videoId = parseYouTubeId(entry.url || entry.videoId);
   if (!videoId) throw new Error('Could not find a YouTube video id in that link.');
 
+  // Null is allowed: a POV nobody has filed yet is still worth keeping, and
+  // demanding a match up front would make adding a link a two-step chore.
+  let matchId = safeId(entry.matchId) ? entry.matchId : null;
+
+  // A well-formed id for a match that no longer exists gets treated as unfiled.
+  // Two people with the page open is enough to produce this — one deletes a
+  // match while the other files a POV against it. Storing the dead id instead
+  // would hide the POV completely: it belongs to no match, and it is not
+  // "unfiled" either, so it appears nowhere on the page.
+  if (matchId && !(await store.readMatches()).some((m) => m.id === matchId)) {
+    matchId = null;
+  }
+
   return store.saveVod({
     id: newId(),
     videoId,
     title: String(entry.title || '').slice(0, 200),
     player: String(entry.player || '').slice(0, 64),
-    // Null is allowed: a POV nobody has filed yet is still worth keeping, and
-    // demanding a match up front would make adding a link a two-step chore.
-    matchId: safeId(entry.matchId) ? entry.matchId : null,
+    matchId,
     label: String(entry.label || '').slice(0, 200),
     addedUtc: new Date().toISOString(),
     source: 'youtube',

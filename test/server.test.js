@@ -139,6 +139,13 @@ test('the whole review round-trips through the store', async (t) => {
     assert.strictEqual((await vods.readYouTube()).filter((v) => v.videoId === 'dQw4w9WgXcQ').length, 1);
   });
 
+  await t.test('a POV filed against a deleted match lands in unfiled', async () => {
+    // Otherwise it belongs to no match and is not unfiled either, so it shows
+    // up nowhere at all — and on Postgres it is a foreign-key 500.
+    const v = await vods.addYouTube({ url: 'https://youtu.be/9bZkp7q19f0', matchId: 'deadbeef' });
+    assert.strictEqual(v.matchId, null);
+  });
+
   await t.test('comments come back in timeline order, not insertion order', async () => {
     await vods.addComment(match.id, { atMs: 91000, body: 'late' });
     await vods.addComment(match.id, { atMs: 1000, body: 'early' });
