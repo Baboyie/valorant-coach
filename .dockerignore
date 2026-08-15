@@ -1,0 +1,24 @@
+.git
+node_modules
+data
+.env
+.env.local
+
+# The recorder is a Windows desktop app — none of it belongs in a Linux
+# container, and the target directories are gigabytes.
+recorder-app
+recorder-core
+recorder-proto
+target
+Cargo.toml
+Cargo.lock
+.cargo
+
+# Benchmark data: hundreds of MB of frame CSVs with no business in an image.
+bench
+
+docs
+*.md
+*.log
+*.zip
+*.mp4

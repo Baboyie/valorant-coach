@@ -1,0 +1,40 @@
+# Fly.io. Chosen as the worked example because its volumes are explicit —
+# the thing this app actually needs — but Railway and Render work the same way;
+# see docs/DEPLOY.md.
+
+app = "debrief"
+primary_region = "lhr"   # put it near the team, not near us
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8787"
+  DEBRIEF_DATA_DIR = "/data"
+
+# The disk. Without this the container still runs and still looks fine, and
+# every match, note and scoreboard disappears on the next deploy.
+[[mounts]]
+  source = "debrief_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # Never scale past one machine: state is files on one volume, so a second
+  # instance would serve a different, diverging copy of the team's review.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  max_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

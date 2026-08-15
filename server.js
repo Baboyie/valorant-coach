@@ -18,6 +18,41 @@ const DATA_DIR = process.env.DEBRIEF_DATA_DIR || path.join(__dirname, 'data');
 // unauthenticated LAN setup keeps working exactly as it did.
 auth.install(app);
 
+// Refuse to serve a public deployment with writes wide open.
+//
+// Unauthenticated is the right default on a trusted LAN and a liability the
+// moment the app has a public URL: anyone who finds it could post or delete a
+// team's review. Rather than trust whoever deploys it to remember, production
+// has to be configured or it does not boot.
+//
+// DEBRIEF_ALLOW_OPEN=1 is the escape hatch for a private network deployment
+// that genuinely wants no sign-in.
+if (process.env.NODE_ENV === 'production' && !auth.config().enabled
+    && process.env.DEBRIEF_ALLOW_OPEN !== '1') {
+  console.error(
+    '\nRefusing to start: NODE_ENV=production with no GOOGLE_CLIENT_ID.\n' +
+    'Anyone reaching this server could post or delete your team\'s review.\n\n' +
+    'Set GOOGLE_CLIENT_ID and DEBRIEF_ALLOWED_EMAILS (see .env.example),\n' +
+    'or set DEBRIEF_ALLOW_OPEN=1 if this really is a private network.\n'
+  );
+  process.exit(1);
+}
+
+// Health check for the platform's restart logic. Reports whether the data
+// directory is actually writable — a container that came up without its
+// volume mounted looks healthy right up until the first save fails.
+app.get('/api/health', async (_req, res) => {
+  try {
+    await fsp.mkdir(DATA_DIR, { recursive: true });
+    const probe = path.join(DATA_DIR, '.health');
+    await fsp.writeFile(probe, String(Date.now()));
+    await fsp.rm(probe, { force: true });
+    res.json({ ok: true, dataDir: DATA_DIR, auth: auth.config().enabled });
+  } catch (e) {
+    res.status(503).json({ ok: false, error: `data dir not writable: ${e.message}` });
+  }
+});
+
 // Only ever forward to Riot's own API hosts — never an arbitrary URL.
 const RIOT_HOST_RE = /^[a-z0-9-]+\.api\.riotgames\.com$/i;
 
