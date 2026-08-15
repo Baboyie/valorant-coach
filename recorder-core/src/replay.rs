@@ -99,7 +99,11 @@ pub struct SaveReport {
 }
 
 impl ReplayRing {
-    pub fn new(window_secs: u64, gop_secs: u64, byte_cap: usize) -> ReplayRing {
+    /// `gop_secs` is the encoder's keyframe interval, in seconds. The ring
+    /// retains two of them beyond the requested window so a keyframe always
+    /// exists at or before the window start — so a shorter GOP directly buys
+    /// both tighter clips and a smaller ring.
+    pub fn new(window_secs: u64, gop_secs: f64, byte_cap: usize) -> ReplayRing {
         ReplayRing {
             inner: Mutex::new(Inner {
                 frames: VecDeque::new(),
@@ -117,7 +121,7 @@ impl ReplayRing {
                 bytes: 0,
             }),
             window_100ns: (window_secs as i64) * 10_000_000,
-            margin_100ns: (gop_secs as i64) * 2 * 10_000_000,
+            margin_100ns: ((gop_secs * 2.0 * 10_000_000.0) as i64).max(10_000_000),
             byte_cap,
         }
     }

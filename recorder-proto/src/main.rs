@@ -241,7 +241,7 @@ fn cmd_record() -> Result<()> {
     }
     // ~0.1 bits per pixel per frame lands near 25 Mbps at 1080p60, which is in
     // the right neighbourhood for competitive footage without being wasteful.
-    let bitrate = ((w as u64 * h as u64 * fps as u64) / 10).min(80_000_000) as u32;
+    let bitrate = encoder::EncoderConfig::default_bitrate(w, h, fps);
 
     println!("target : {}", t.what);
     println!("output : {out}");
@@ -268,7 +268,13 @@ fn cmd_record() -> Result<()> {
         }
     }
 
-    let cfg = encoder::EncoderConfig { width: w, height: h, fps, bitrate };
+    let cfg = encoder::EncoderConfig {
+        width: w,
+        height: h,
+        fps,
+        bitrate,
+        gop_frames: encoder::EncoderConfig::default_gop(fps),
+    };
     let mut enc = encoder::Encoder::to_file(
         &dev,
         &out,
@@ -462,16 +468,25 @@ fn cmd_replay() -> Result<()> {
         eprintln!("warning: {w}x{h} has an odd dimension; H.264 wants even sizes and \
                    the encoder may reject it.");
     }
-    let bitrate = ((w as u64 * h as u64 * fps as u64) / 10).min(80_000_000) as u32;
+    let bitrate = encoder::EncoderConfig::default_bitrate(w, h, fps);
+    let gop_frames = encoder::EncoderConfig::default_gop(fps);
+    let gop_secs = gop_frames as f64 / fps.max(1) as f64;
 
     println!("target : {}", t.what);
     println!("window : last {window}s kept, running {run_secs}s so the ring wraps");
-    println!("format : {w}x{h} @ {fps} fps, {:.1} Mbps H.264\n", bitrate as f64 / 1e6);
+    println!("format : {w}x{h} @ {fps} fps, {:.1} Mbps H.264, keyframe every {gop_secs:.2}s\n",
+             bitrate as f64 / 1e6);
 
     // 256 MB hard cap: the window bounds memory in time, this bounds it in
     // bytes if the bitrate estimate is ever badly wrong (ADR §6's RAM budget).
-    let ring = std::sync::Arc::new(replay::ReplayRing::new(window, 2, 256 * 1024 * 1024));
-    let cfg = encoder::EncoderConfig { width: w, height: h, fps, bitrate };
+    let ring = std::sync::Arc::new(replay::ReplayRing::new(window, gop_secs, 256 * 1024 * 1024));
+    let cfg = encoder::EncoderConfig {
+        width: w,
+        height: h,
+        fps,
+        bitrate,
+        gop_frames,
+    };
     let mut enc = encoder::Encoder::to_replay(&dev, &cfg, std::sync::Arc::clone(&ring))?;
 
     // Audio runs as a second encoder into the same ring: the grabber sink
@@ -551,8 +566,9 @@ fn cmd_replay() -> Result<()> {
              r.frames, r.keyframes, r.bytes as f64 / 1e6, r.span_secs);
     println!("              evicted {} frames; buffers: {} allocated, {} reused",
              r.evicted, r.allocs, r.reuses);
-    println!("              keyframe interval {:.2}s (configured: 2s)",
-             r.mean_kf_interval_secs);
+    println!("              keyframe interval {:.2}s (requested {:.2}s — the NVIDIA MFT",
+             r.mean_kf_interval_secs, gop_secs);
+    println!("              clamps to ~0.9s regardless; see ADR §9c)");
     if r.non_monotonic > 0 {
         // B-frames got through despite configure_codec — the muxed clip's
         // timestamps are suspect and this needs investigating, loudly.

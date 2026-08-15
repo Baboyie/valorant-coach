@@ -94,13 +94,16 @@ impl Config {
     }
 
     /// Bitrate in bits/sec for a given frame size, honouring an explicit
-    /// override. The automatic figure is ~0.1 bits per pixel per frame, which
-    /// lands near 12 Mbps at 1080p60 — enough for competitive footage without
-    /// making the encoder work for picture quality nobody reviews.
+    /// override.
+    ///
+    /// The automatic figure tracks what ShadowPlay settles on for 1080p60
+    /// (~16 Mbps), measured from its own output on this machine rather than
+    /// guessed — §22 asks for quality comparable to it, and bitrate is nearly
+    /// free on NVENC, costing disk and file size rather than encode time.
     pub fn bitrate_for(&self, width: u32, height: u32) -> u32 {
         if self.bitrate_mbps > 0 {
             return self.bitrate_mbps.saturating_mul(1_000_000);
         }
-        ((width as u64 * height as u64 * self.fps as u64) / 10).min(80_000_000) as u32
+        recorder_core::encoder::EncoderConfig::default_bitrate(width, height, self.fps)
     }
 }

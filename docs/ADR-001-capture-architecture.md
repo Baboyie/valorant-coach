@@ -659,6 +659,59 @@ encode is new work. `recorder-proto record --no-audio` reproduces the original
 configuration; the capped-240 benchmark needs one more pass before that claim is
 repeated. Until then §9 stands only for video-only recording.
 
+## 9c. Calibrated against ShadowPlay's own output (2026-08-15)
+
+52 ShadowPlay clips of Valorant from this machine, at settings the user reports
+as 1080p60 / 30–50 Mbps, were parsed for their encoder configuration. Finished
+clips cannot show what ShadowPlay *cost* — §18's comparison still needs
+concurrent benchmark runs — but they show exactly what it *produces*, which is
+what §22's "quality comparable to ShadowPlay" needs to be measured against.
+
+| | ShadowPlay | Ours (before) | Ours (now) |
+|---|---|---|---|
+| Codec | H.264 High, level 4.2 | H.264 High | H.264 High, level 4.2 |
+| Frame rate | 60 | 60 | 60 |
+| **Keyframe interval** | **0.5 s** | 2 s | 0.5 s requested |
+| Video bitrate | 50 Mbps (2024) → 16.6 Mbps (2026) | 12.4 Mbps | 15.3 Mbps |
+| Audio | AAC 192 kbps | AAC 128 kbps | AAC 128 kbps |
+
+Two changes followed, both from evidence rather than taste:
+
+**Bitrate raised to track their ~16 Mbps.** Their own older clips ran at 50 and
+newer ones at 16 with everything else identical, so 16 is the figure NVIDIA
+converged on, not one we invented. Bitrate is close to free on NVENC — it costs
+disk and file size, not encode time — so §22 is cheap to honour, while §14's disk
+concerns argue against copying the 50 Mbps setting.
+
+**GOP shortened from 2 s toward 0.5 s.** This is the more important one, and it
+is a *clip-quality* setting rather than a compression one: a replay clip must
+start on a keyframe, so the GOP is the worst-case gap between the moment the
+player asked for and the moment their clip actually begins. Measured effect: a
+10 s window produced a **13 s** file before and **10.3 s** after, and the ring's
+retention fell from 14 s to 11 s.
+
+### The MFT will not give us ShadowPlay's GOP
+
+Requesting 30 frames yields ~56; requesting 15 yields ~52. Through
+`MF_MT_MAX_KEYFRAME_SPACING` *and* `CODECAPI_AVEncMPVGOPSize`, and neither call
+reports an error. That is a floor near 0.9 s at 60 fps, not a setting we are
+failing to apply.
+
+**ShadowPlay achieves 0.5 s on this same GPU**, which says NVIDIA's own recorder
+drives the NVENC SDK directly rather than going through Media Foundation.
+
+§2 deferred the direct-NVENC backend with a specific condition: add it "only if
+the benchmark shows the MF layer costs measurable overhead". The benchmark found
+no such overhead — but this is a *second*, different reason to revisit that
+decision, and one §2 did not anticipate. The Media Foundation layer costs no
+measurable performance; it costs **control**. Clip-start precision is
+user-visible, it is the thing a clipper is judged on, and we cannot match
+ShadowPlay's while going through this route.
+
+Not acted on yet: a ~0.9 s worst-case clip start is acceptable, and a second
+encoder backend is a large change to justify on one property. Recorded so the
+choice is made on evidence when it comes up, rather than rediscovered.
+
 ## 10. Blockers
 
 - ~~§29 acceptance benchmarking is gated on physical access to the home rig.~~

@@ -28,6 +28,48 @@ pub struct EncoderConfig {
     pub height: u32,
     pub fps: u32,
     pub bitrate: u32,
+    /// Frames between keyframes.
+    ///
+    /// This is a clip-quality setting, not just a compression one: a replay
+    /// clip must start on a keyframe, so the GOP is the worst-case error
+    /// between the moment the player asked for and the moment the clip
+    /// actually begins. It also sets how much extra the ring must retain
+    /// beyond the requested window.
+    ///
+    /// Measured from ShadowPlay's own output on this machine: **0.5 s**, across
+    /// clips from 2024 and 2026 alike. That is a deliberate choice on their
+    /// part and the right one for a clipper — our original 2 s made a 10 s
+    /// window produce a 13 s file.
+    ///
+    /// **The NVIDIA MFT does not honour this.** Requesting 30 frames yields ~56
+    /// and requesting 15 yields ~52, through both `MF_MT_MAX_KEYFRAME_SPACING`
+    /// and `CODECAPI_AVEncMPVGOPSize` — a floor around 0.9 s at 60 fps, not a
+    /// setting we are failing to apply. The request is kept because it is
+    /// correct, costs nothing, and a future driver may honour it. See ADR §9c
+    /// for what this implies about the Media Foundation route.
+    pub gop_frames: u32,
+}
+
+impl EncoderConfig {
+    /// Bits per second for a frame size, at roughly the density ShadowPlay
+    /// settles on for 1080p60 (~16 Mbps).
+    ///
+    /// Their older clips ran 50 Mbps and their newer ones ~16 at identical
+    /// settings otherwise, so 16 is the figure they converged on rather than a
+    /// number we invented. Bitrate is nearly free on NVENC — it costs disk and
+    /// file size, not encode time — so §22's "quality comparable to ShadowPlay"
+    /// is cheap to honour, while §14's disk concerns argue against copying the
+    /// 50 Mbps setting.
+    pub fn default_bitrate(width: u32, height: u32, fps: u32) -> u32 {
+        let pixels_per_sec = width as u64 * height as u64 * fps as u64;
+        // 1920*1080*60 = 124.4M pixel/s -> ~16 Mbps
+        ((pixels_per_sec * 16_000_000) / 124_416_000).min(80_000_000) as u32
+    }
+
+    /// Half a second of frames, matching ShadowPlay.
+    pub fn default_gop(fps: u32) -> u32 {
+        (fps.max(1) / 2).max(1)
+    }
 }
 
 /// The H.264 type the *encoder* is configured with. The replay muxer builds
@@ -44,12 +86,9 @@ fn h264_output_type(cfg: &EncoderConfig) -> Result<IMFMediaType> {
         // High profile: better quality at the same bitrate than Main, and
         // universally supported by the hardware we care about.
         t.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?;
-        // Two-second GOP (ADR §2). Left to itself a driver may pick a much
-        // longer one, and GOP length is not cosmetic here: a replay clip must
-        // start on a keyframe, so the GOP bounds both how much extra the ring
-        // retains and how far a clip's start can land from where the user
-        // asked.
-        t.SetUINT32(&MF_MT_MAX_KEYFRAME_SPACING, cfg.fps.max(1) * 2)?;
+        // Left to itself a driver picks a much longer GOP. See
+        // EncoderConfig::gop_frames for why this is a clip-quality setting.
+        t.SetUINT32(&MF_MT_MAX_KEYFRAME_SPACING, cfg.gop_frames.max(1))?;
         set_size(&t, &MF_MT_FRAME_SIZE, cfg.width, cfg.height)?;
         set_size(&t, &MF_MT_FRAME_RATE, cfg.fps, 1)?;
         set_size(&t, &MF_MT_PIXEL_ASPECT_RATIO, 1, 1)?;
@@ -176,7 +215,7 @@ impl Encoder {
         let writer = unsafe { MFCreateSinkWriterFromURL(&HSTRING::from(path), None, &attrs)? };
         let stream = unsafe { writer.AddStream(&h264_output_type(cfg)?)? };
         unsafe { writer.SetInputMediaType(stream, &argb_input_type(cfg)?, None)? };
-        configure_codec(&writer, stream);
+        configure_codec(&writer, stream, cfg.gop_frames.max(1));
 
         let mut audio_stream = None;
         let mut audio_block_align = 0;
@@ -234,7 +273,7 @@ impl Encoder {
         // stream 0. AddStream would try to add a second and fail.
         let stream = 0u32;
         unsafe { writer.SetInputMediaType(stream, &argb_input_type(cfg)?, None)? };
-        configure_codec(&writer, stream);
+        configure_codec(&writer, stream, cfg.gop_frames.max(1));
         unsafe { writer.BeginWriting()? };
 
         Ok(Encoder {
@@ -518,7 +557,7 @@ impl IMFClockStateSink_Impl for AudioGrabberCallback_Impl {
 /// Best-effort by design: ICodecAPI properties vary by vendor, and a missing
 /// one is reported rather than fatal — the recording is still valid, just
 /// configured by driver defaults.
-fn configure_codec(writer: &IMFSinkWriter, stream: u32) {
+fn configure_codec(writer: &IMFSinkWriter, stream: u32, gop_frames: u32) {
     unsafe {
         let mut raw: *mut core::ffi::c_void = std::ptr::null_mut();
         let got = writer.GetServiceForStream(
@@ -538,6 +577,22 @@ fn configure_codec(writer: &IMFSinkWriter, stream: u32) {
         // Not all encoders expose low-latency mode; silence is fine here
         // because nothing downstream depends on it the way it does on B=0.
         let _ = api.SetValue(&CODECAPI_AVLowLatencyMode, &variant_bool(true));
+
+        // GOP again, through ICodecAPI this time.
+        //
+        // MF_MT_MAX_KEYFRAME_SPACING on the media type is honoured only
+        // loosely by this NVIDIA MFT — measured 0.94 s of actual spacing from a
+        // 0.5 s request, and 1.34 s from a 2 s one, which is neither the
+        // requested value nor proportional to it. The codec property is the
+        // direct control, so it is set as well and the media-type attribute
+        // kept as the fallback for encoders that only read that.
+        //
+        // This matters for clips, not for file size: the GOP is the worst-case
+        // gap between the moment the player asked for and the moment their clip
+        // can actually start.
+        if let Err(e) = api.SetValue(&CODECAPI_AVEncMPVGOPSize, &variant_u32(gop_frames)) {
+            eprintln!("note: encoder would not take a {gop_frames}-frame GOP ({e}); clip start precision will be whatever the driver picks");
+        }
     }
 }
 

@@ -329,16 +329,19 @@ fn start_buffering(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> w
     let (cap, frames) = capture::Capture::for_window(&dev, hwnd, config.fps, 6)?;
     let w = cap.size.Width as u32;
     let h = cap.size.Height as u32;
+    let gop_frames = encoder::EncoderConfig::default_gop(config.fps);
     let cfg = encoder::EncoderConfig {
         width: w,
         height: h,
         fps: config.fps,
         bitrate: config.bitrate_for(w, h),
+        gop_frames,
     };
     // 512 MB cap: the window bounds the ring in time, this bounds it in bytes
     // if the bitrate estimate is ever badly wrong (ADR §6's RAM budget against
     // a 16 GB machine that is also running the game).
-    let ring = Arc::new(replay::ReplayRing::new(config.window_secs, 2, 512 * 1024 * 1024));
+    let gop_secs = gop_frames as f64 / config.fps.max(1) as f64;
+    let ring = Arc::new(replay::ReplayRing::new(config.window_secs, gop_secs, 512 * 1024 * 1024));
     let enc = encoder::Encoder::to_replay(&dev, &cfg, Arc::clone(&ring))?;
 
     // Audio needs its own encoder here: the sample grabber sink carries exactly
@@ -377,6 +380,7 @@ fn start_recording(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> w
         height: h,
         fps: config.fps,
         bitrate: config.bitrate_for(w, h),
+        gop_frames: encoder::EncoderConfig::default_gop(config.fps),
     };
     let path = timestamped_path(&config.output_dir, "recording");
     if let Some(dir) = path.parent() {
