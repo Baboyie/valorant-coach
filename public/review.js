@@ -363,7 +363,10 @@ async function loadShots() {
   $('noShots').classList.toggle('hidden', shots.length > 0);
 
   for (const s of shots) {
-    const src = `/api/scrims/${state.match.id}/shots/${s.id}`;
+    // The server hands back the URL it wants used: our own route when the image
+    // is on disk, the CDN's when it is in blob storage. Rebuilding the route
+    // here would work, but only by bouncing every image through a redirect.
+    const src = s.url || `/api/scrims/${state.match.id}/shots/${s.id}`;
     const fig = document.createElement('figure');
     fig.className = 'shot';
 
@@ -387,8 +390,46 @@ async function loadShots() {
   }
 }
 
+// Serverless request bodies cap out around 4.5 MB, and a lossless PNG of a 4K
+// scoreboard clears that easily. Rather than let the upload fail on exactly the
+// screenshots people take on the nicest monitors, re-encode anything large.
+const SHOT_UPLOAD_LIMIT = 4 * 1024 * 1024;
+const SHOT_MAX_WIDTH = 2560;
+
 /**
- * Upload a Blob or File as-is.
+ * Shrink a screenshot until it will fit through the upload, or give up and send
+ * the original.
+ *
+ * WebP rather than JPEG: a scoreboard is a wall of small text on flat colour,
+ * which is the case where JPEG's ringing artefacts actually cost you the
+ * information you screenshotted it for. Quality steps down before the pixels
+ * do — a smaller image of legible text beats a full-size blurry one.
+ */
+async function shrinkForUpload(blob) {
+  if (blob.size <= SHOT_UPLOAD_LIMIT) return blob;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(blob);
+  } catch {
+    return blob; // not decodable here; let the server judge it
+  }
+
+  const scale = Math.min(1, SHOT_MAX_WIDTH / bitmap.width);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+
+  for (const quality of [0.92, 0.8, 0.65]) {
+    const out = await new Promise((r) => canvas.toBlob(r, 'image/webp', quality));
+    if (out && out.size <= SHOT_UPLOAD_LIMIT) return out;
+  }
+  return blob;
+}
+
+/**
+ * Upload a Blob or File.
  *
  * Posted as raw bytes with the image's own content type rather than multipart,
  * so a clipboard Blob goes straight up with nothing in between — which is the
@@ -399,13 +440,14 @@ async function uploadShot(blob, label) {
   if (!state.match) return;
   $('shotErr').classList.add('hidden');
   try {
+    const body = await shrinkForUpload(blob);
     await api(`/api/scrims/${state.match.id}/shots`, {
       method: 'POST',
       headers: {
-        'Content-Type': blob.type || 'image/png',
+        'Content-Type': body.type || 'image/png',
         'X-Shot-Label': encodeURIComponent(label || ''),
       },
-      body: blob,
+      body,
     });
     loadShots();
   } catch (e) {

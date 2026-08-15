@@ -21,9 +21,35 @@ const { OAuth2Client } = require('google-auth-library');
 const SESSION_COOKIE = 'debrief_sid';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-// In memory on purpose: a restart logs everyone out, which for a self-hosted
-// team tool is a fair price for not writing a session file on every request.
-const sessions = new Map();
+// The session is the cookie.
+//
+// It used to be a random id looked up in an in-memory Map, which is fine for
+// one long-lived process and useless the moment the server is serverless: every
+// request may land in a different instance that has never heard of that id, so
+// people get signed out at random. Signing the identity into the cookie itself
+// means any instance can verify it with no shared store at all.
+//
+// The trade is that a session cannot be revoked before it expires. For a
+// five-person team allowlist — where removing an email from the allowlist stops
+// the *next* sign-in and the TTL closes the rest — that is the right side of it.
+function sessionSecret() {
+  const set = process.env.DEBRIEF_SESSION_SECRET;
+  if (set) return set;
+  // No secret configured: mint one for this process. Locally that means a
+  // restart signs you out, which is the old behaviour. Production refuses to
+  // start without one (see server.js) rather than silently doing this across
+  // several instances, where no two would accept each other's cookies.
+  if (!sessionSecret._ephemeral) {
+    sessionSecret._ephemeral = crypto.randomBytes(32).toString('base64url');
+  }
+  return sessionSecret._ephemeral;
+}
+
+const b64 = (buf) => Buffer.from(buf).toString('base64url');
+
+function sign(payload) {
+  return crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
+}
 
 function config() {
   const clientId = process.env.GOOGLE_CLIENT_ID || '';
@@ -58,24 +84,35 @@ function readCookie(req, name) {
   return null;
 }
 
+/** Build a `<payload>.<signature>` cookie value carrying the identity. */
 function newSession(user) {
-  // 32 random bytes is not guessable, so the cookie needs no signing — its
-  // value carries no claims, only a lookup key.
-  const sid = crypto.randomBytes(32).toString('base64url');
-  sessions.set(sid, { user, expiresAt: Date.now() + SESSION_TTL_MS });
-  return sid;
+  const payload = b64(JSON.stringify({ user, exp: Date.now() + SESSION_TTL_MS }));
+  return `${payload}.${sign(payload)}`;
 }
 
 function getSession(req) {
-  const sid = readCookie(req, SESSION_COOKIE);
-  if (!sid) return null;
-  const s = sessions.get(sid);
-  if (!s) return null;
-  if (s.expiresAt < Date.now()) {
-    sessions.delete(sid);
+  const raw = readCookie(req, SESSION_COOKIE);
+  if (!raw) return null;
+  const dot = raw.lastIndexOf('.');
+  if (dot < 1) return null;
+  const payload = raw.slice(0, dot);
+  const got = Buffer.from(raw.slice(dot + 1));
+  const want = Buffer.from(sign(payload));
+
+  // Constant-time, and length-checked first because timingSafeEqual throws on
+  // a length mismatch rather than returning false.
+  if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) return null;
+
+  let claims;
+  try {
+    claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch {
     return null;
   }
-  return { sid, ...s };
+  // Expiry is inside the signed payload, so it cannot be edited by the holder.
+  // The cookie's own Max-Age is only a hint to the browser.
+  if (!claims || !claims.user || !(claims.exp > Date.now())) return null;
+  return { sid: raw, user: claims.user, expiresAt: claims.exp };
 }
 
 function setSessionCookie(res, sid, cfg) {
@@ -171,9 +208,9 @@ function install(app) {
     }
   });
 
-  app.post('/api/auth/logout', (req, res) => {
-    const s = getSession(req);
-    if (s) sessions.delete(s.sid);
+  // Clearing the cookie is the whole of logout: with nothing stored server-side
+  // there is no record to delete.
+  app.post('/api/auth/logout', (_req, res) => {
     clearSessionCookie(res, config());
     res.json({ ok: true });
   });
@@ -190,4 +227,10 @@ function install(app) {
   });
 }
 
-module.exports = { install, requireAuth, config, verifyGoogleCredential, isAllowed };
+module.exports = {
+  install, requireAuth, config, verifyGoogleCredential, isAllowed,
+  // Exported for the session tests: a forged cookie that verified would hand
+  // someone else's identity to anyone who asked, so it is worth a test that
+  // actually tries to forge one.
+  newSession, getSession, SESSION_COOKIE,
+};

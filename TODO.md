@@ -36,8 +36,11 @@ the blocker expected — since the June 2026 granular-quota change it has its ow
 but registering a pasted URL avoids OAuth, token refresh and Google verification
 entirely, so automatic upload was not worth building yet.
 
-Self-hosted upload (`POST /api/vod`, range-request streaming, match grouping)
-stays in the server for VODs a team would rather not put on YouTube.
+Self-hosted upload (`POST /api/vod`, range-request streaming) has since been
+**removed**. It was never wired up from the app, it cannot work on a serverless
+host, and keeping it would have meant shipping a route that fails in a way
+nobody could diagnose. The grouping helper went with it; the recorder still
+writes UTC start times in its sidecar, so rebuilding alignment stays possible.
 
 **Scoreboards** are per-match images: paste one anywhere on the match view
 (Win+Shift+S then Ctrl+V, which is how they are actually taken) or pick a file.
@@ -67,8 +70,12 @@ Still open:
   refresh tokens, which is the security property above, given away. Worth doing
   only when pasting links becomes the bottleneck.
 - Comments are per-video; a comment does not appear on a teammate's POV of the
-  same moment. The match grouping in `vods.js` already computes what that needs.
-- Sessions are in memory, so a server restart signs everyone out.
+  same moment. The recorder's UTC sidecar has what that would need.
+- ~~Sessions are in memory, so a server restart signs everyone out.~~ **Done** —
+  the identity is now signed into the cookie itself, so any instance can verify
+  it with no shared store. A session cannot be revoked before it expires; for a
+  five-person allowlist, removing an email stops the next sign-in and the TTL
+  closes the rest.
 
 ## 2b. Team VOD reviewer — original scoping notes
 

@@ -36,13 +36,13 @@ pub struct Config {
     /// a Riot `name#tag` is the obvious choice, but a team can use whatever
     /// they already call each other.
     pub player: String,
-    /// Where finished recordings are uploaded. Empty disables upload entirely,
-    /// which is the default: nothing leaves this machine unless it is asked to.
-    pub upload_url: String,
-    /// Upload clips and recordings once gameplay has ended. §13 is explicit —
-    /// never let upload compete with the game — so this never runs while a
-    /// recording is in progress.
-    pub auto_upload: bool,
+    //
+    // `upload_url` and `auto_upload` used to live here, aimed at the review
+    // server's own upload endpoint. Nothing ever read them, that endpoint is
+    // gone, and full recordings now go to YouTube with only the link stored.
+    // Whenever automatic upload is built it will need OAuth credentials and a
+    // channel, not a URL, so these were removed rather than left as settings
+    // that describe a plan the app no longer has.
 }
 
 impl Default for Config {
@@ -60,8 +60,6 @@ impl Default for Config {
             capture_audio: true,
             capture_mic: false,
             player: String::new(),
-            upload_url: String::new(),
-            auto_upload: false,
         }
     }
 }

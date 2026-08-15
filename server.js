@@ -10,10 +10,6 @@ const app = express();
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Where uploaded POVs live. Configurable because the whole point of
-// self-hosting is putting 24 GB per match on a drive that has room for it.
-const DATA_DIR = process.env.DEBRIEF_DATA_DIR || path.join(__dirname, 'data');
-
 // Sign-in routes. No-ops unless GOOGLE_CLIENT_ID is set, so an existing
 // unauthenticated LAN setup keeps working exactly as it did.
 auth.install(app);
@@ -38,18 +34,39 @@ if (process.env.NODE_ENV === 'production' && !auth.config().enabled
   process.exit(1);
 }
 
-// Health check for the platform's restart logic. Reports whether the data
-// directory is actually writable — a container that came up without its
-// volume mounted looks healthy right up until the first save fails.
+// Same reasoning for the session secret. Without a fixed one each serverless
+// instance signs with its own, so a cookie minted by one is rejected by the
+// next and people are logged out at random — a bug that reads as flakiness
+// rather than as misconfiguration, which is exactly why it is checked here.
+if (process.env.NODE_ENV === 'production' && auth.config().enabled
+    && !process.env.DEBRIEF_SESSION_SECRET) {
+  console.error(
+    '\nRefusing to start: sign-in is on but DEBRIEF_SESSION_SECRET is not set.\n' +
+    'Sessions would break unpredictably across instances.\n\n' +
+    'Generate one with:  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"\n'
+  );
+  process.exit(1);
+}
+
+// Health check for the platform's restart logic. Proves the *storage* works,
+// not merely that the process is up: a container without its volume, or a
+// deployment with a bad connection string, looks perfectly healthy right up
+// until the first save fails.
 app.get('/api/health', async (_req, res) => {
   try {
-    await fsp.mkdir(DATA_DIR, { recursive: true });
-    const probe = path.join(DATA_DIR, '.health');
-    await fsp.writeFile(probe, String(Date.now()));
-    await fsp.rm(probe, { force: true });
-    res.json({ ok: true, dataDir: DATA_DIR, auth: auth.config().enabled });
+    if (vods.storeKind === 'postgres') {
+      await vods.ensureSchema();
+      await vods.readMatches();
+    } else {
+      const dir = vods.store.root();
+      await fsp.mkdir(dir, { recursive: true });
+      const probe = path.join(dir, '.health');
+      await fsp.writeFile(probe, String(Date.now()));
+      await fsp.rm(probe, { force: true });
+    }
+    res.json({ ok: true, store: vods.storeKind, auth: auth.config().enabled });
   } catch (e) {
-    res.status(503).json({ ok: false, error: `data dir not writable: ${e.message}` });
+    res.status(503).json({ ok: false, store: vods.storeKind, error: e.message });
   }
 });
 
@@ -159,101 +176,14 @@ app.post('/api/coach', async (req, res) => {
   }
 });
 
-/* ------------------------------------------------------------------ VODs */
-
-// POST /api/vod  — upload one POV.
-// Headers: X-Vod-Meta = URL-encoded JSON sidecar. Body = raw mp4 bytes.
-//
-// Streamed straight to disk rather than buffered: these are 40 MB clips and
-// multi-gigabyte match recordings, and holding one in memory would put the
-// server's footprint at the mercy of the largest thing anyone records.
-app.post('/api/vod', async (req, res) => {
-  let meta;
-  try {
-    meta = JSON.parse(decodeURIComponent(req.get('x-vod-meta') || ''));
-  } catch {
-    return res.status(400).json({ error: 'Missing or invalid X-Vod-Meta header.' });
-  }
-  if (!Number.isFinite(meta.started_epoch_ms) || !Number.isFinite(meta.duration_secs)) {
-    // Without an absolute start time a POV cannot be aligned with anyone
-    // else's, which makes it useless for the only thing this server is for.
-    return res
-      .status(400)
-      .json({ error: 'Sidecar needs started_epoch_ms and duration_secs.' });
-  }
-
-  const id = vods.newId();
-  const dir = path.join(vods.vodRoot(DATA_DIR), id);
-  await fsp.mkdir(dir, { recursive: true });
-  await fsp.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
-
-  const target = path.join(dir, 'video.mp4');
-  const out = fs.createWriteStream(target);
-  req.pipe(out);
-
-  out.on('finish', () => res.json({ id, bytes: out.bytesWritten }));
-  out.on('error', (e) => {
-    // Leave meta.json behind: the listing marks the VOD incomplete, which is
-    // how a teammate finds out their upload failed rather than silently
-    // missing from the review.
-    res.status(500).json({ error: 'Write failed: ' + e.message });
-  });
-});
-
-// GET /api/matches — every POV, grouped into matches by overlapping time.
-app.get('/api/matches', async (_req, res) => {
-  try {
-    const all = await vods.listVods(DATA_DIR);
-    res.json({ matches: vods.groupIntoMatches(all).reverse() });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/vod/:id/video — stream a POV, with range support so the review
-// page can seek without downloading gigabytes first.
-app.get('/api/vod/:id/video', async (req, res) => {
-  const { id } = req.params;
-  if (!vods.safeId(id)) return res.status(400).end();
-  const file = path.join(vods.vodRoot(DATA_DIR), id, 'video.mp4');
-
-  let stat;
-  try {
-    stat = await fsp.stat(file);
-  } catch {
-    return res.status(404).json({ error: 'No such VOD.' });
-  }
-
-  const range = req.headers.range;
-  if (!range) {
-    res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes' });
-    return fs.createReadStream(file).pipe(res);
-  }
-  // Range requests are what make scrubbing feel instant; without them a
-  // browser refuses to seek past what it has already downloaded.
-  const m = /bytes=(\d*)-(\d*)/.exec(range);
-  const start = m && m[1] ? parseInt(m[1], 10) : 0;
-  const end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
-  if (start >= stat.size || end >= stat.size || start > end) {
-    return res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` }).end();
-  }
-  res.writeHead(206, {
-    'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-    'Accept-Ranges': 'bytes',
-    'Content-Length': end - start + 1,
-    'Content-Type': 'video/mp4',
-  });
-  fs.createReadStream(file, { start, end }).pipe(res);
-});
-
 /* -------------------------------------------------------------- matches */
 
 // Matches with their POVs attached, which is how the browser wants them: one
 // request per page rather than a match list plus a VOD list to join by hand.
 app.get('/api/scrims', async (_req, res) => {
   const [matches, videos] = await Promise.all([
-    vods.readMatches(DATA_DIR),
-    vods.readYouTube(DATA_DIR),
+    vods.readMatches(),
+    vods.readYouTube(),
   ]);
   res.json({
     matches: matches.map((m) => ({
@@ -267,40 +197,40 @@ app.get('/api/scrims', async (_req, res) => {
 
 app.post('/api/scrims', auth.requireAuth, async (req, res) => {
   try {
-    res.json(await vods.saveMatch(DATA_DIR, req.body || {}));
+    res.json(await vods.saveMatch(req.body || {}));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
 app.delete('/api/scrims/:id', auth.requireAuth, async (req, res) => {
-  res.json({ removed: await vods.deleteMatch(DATA_DIR, req.params.id) });
+  res.json({ removed: await vods.deleteMatch(req.params.id) });
 });
 
 /* --------------------------------------------------------- match notes */
 
 app.get('/api/scrims/:id/notes', async (req, res) => {
-  res.json({ notes: await vods.readNotes(DATA_DIR, req.params.id) });
+  res.json({ notes: await vods.readNotes(req.params.id) });
 });
 
 app.post('/api/scrims/:id/notes', auth.requireAuth, async (req, res) => {
   try {
     const body = { ...(req.body || {}) };
     if (req.user) body.author = req.user.name;
-    res.json(await vods.addNote(DATA_DIR, req.params.id, body));
+    res.json(await vods.addNote(req.params.id, body));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
 app.delete('/api/scrims/:id/notes/:noteId', auth.requireAuth, async (req, res) => {
-  res.json({ removed: await vods.deleteNote(DATA_DIR, req.params.id, req.params.noteId) });
+  res.json({ removed: await vods.deleteNote(req.params.id, req.params.noteId) });
 });
 
 /* --------------------------------------------------- match screenshots */
 
 app.get('/api/scrims/:id/shots', async (req, res) => {
-  res.json({ shots: await vods.readShots(DATA_DIR, req.params.id) });
+  res.json({ shots: await vods.readShots(req.params.id) });
 });
 
 // Raw image bytes in the body, type from Content-Type, optional label in a
@@ -312,7 +242,7 @@ app.post(
   express.raw({ type: Object.keys(vods.SHOT_TYPES), limit: vods.SHOT_MAX_BYTES }),
   async (req, res) => {
     try {
-      const rec = await vods.addShot(DATA_DIR, req.params.id, {
+      const rec = await vods.addShot(req.params.id, {
         contentType: req.get('content-type'),
         bytes: req.body,
         label: decodeURIComponent(req.get('x-shot-label') || ''),
@@ -325,40 +255,43 @@ app.post(
 );
 
 app.get('/api/scrims/:id/shots/:shotId', async (req, res) => {
-  const found = await vods.shotFile(DATA_DIR, req.params.id, req.params.shotId);
+  const found = await vods.shotFile(req.params.id, req.params.shotId);
   if (!found) return res.status(404).json({ error: 'No such image.' });
-  res.type(found.rec.contentType);
+  // On blob storage the image is already served from a CDN, so redirect rather
+  // than pull the bytes through a function invocation to hand them on unchanged.
+  if (!found.file) return res.redirect(302, found.url);
+  res.type(found.contentType);
   // These never change once written, so let the browser keep them.
   res.set('Cache-Control', 'private, max-age=31536000, immutable');
-  fs.createReadStream(found.path).pipe(res);
+  fs.createReadStream(found.file).pipe(res);
 });
 
 app.delete('/api/scrims/:id/shots/:shotId', auth.requireAuth, async (req, res) => {
-  res.json({ removed: await vods.deleteShot(DATA_DIR, req.params.id, req.params.shotId) });
+  res.json({ removed: await vods.deleteShot(req.params.id, req.params.shotId) });
 });
 
 /* --------------------------------------------------------- youtube VODs */
 
 app.get('/api/youtube', async (_req, res) => {
-  res.json({ videos: await vods.readYouTube(DATA_DIR) });
+  res.json({ videos: await vods.readYouTube() });
 });
 
 app.post('/api/youtube', auth.requireAuth, async (req, res) => {
   try {
-    res.json(await vods.addYouTube(DATA_DIR, req.body || {}));
+    res.json(await vods.addYouTube(req.body || {}));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
 app.delete('/api/youtube/:id', auth.requireAuth, async (req, res) => {
-  res.json({ removed: await vods.removeYouTube(DATA_DIR, req.params.id) });
+  res.json({ removed: await vods.removeYouTube(req.params.id) });
 });
 
 /* -------------------------------------------------------------- comments */
 
 app.get('/api/match/:matchId/comments', async (req, res) => {
-  res.json({ comments: await vods.readComments(DATA_DIR, req.params.matchId) });
+  res.json({ comments: await vods.readComments(req.params.matchId) });
 });
 
 app.post('/api/match/:matchId/comments', auth.requireAuth, async (req, res) => {
@@ -369,24 +302,31 @@ app.post('/api/match/:matchId/comments', auth.requireAuth, async (req, res) => {
     // put a teammate's name in, which makes review notes worthless in an
     // argument about who said what.
     if (req.user) body.author = req.user.name;
-    res.json(await vods.addComment(DATA_DIR, req.params.matchId, body));
+    res.json(await vods.addComment(req.params.matchId, body));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
 app.delete('/api/match/:matchId/comments/:id', auth.requireAuth, async (req, res) => {
-  const removed = await vods.deleteComment(DATA_DIR, req.params.matchId, req.params.id);
+  const removed = await vods.deleteComment(req.params.matchId, req.params.id);
   res.json({ removed });
 });
 
-const PORT = process.env.PORT || 8787;
-vods.ensureDirs(DATA_DIR).catch((e) => console.error('could not create data dir:', e.message));
+// On Vercel the platform imports this module and does its own routing, so
+// binding a port there would be wrong. Locally, nothing imports it and it is
+// the server — hence the check rather than two entry points to keep in step.
+if (require.main === module) {
+  const PORT = process.env.PORT || 8787;
+  vods.ensureSchema().catch((e) => console.error('storage not ready:', e.message));
 
-app.listen(PORT, () => {
-  console.log(`DEBRIEF server running at http://localhost:${PORT}`);
-  console.log(`VOD storage: ${vods.vodRoot(DATA_DIR)}`);
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn('WARNING: ANTHROPIC_API_KEY not set — coach reports will fail. Copy .env.example to .env and fill it in.');
-  }
-});
+  app.listen(PORT, () => {
+    console.log(`DEBRIEF server running at http://localhost:${PORT}`);
+    console.log(`Storage: ${vods.storeKind}`);
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.warn('WARNING: ANTHROPIC_API_KEY not set — coach reports will fail. Copy .env.example to .env and fill it in.');
+    }
+  });
+}
+
+module.exports = app;

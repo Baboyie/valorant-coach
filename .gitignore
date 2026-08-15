@@ -16,8 +16,11 @@ target/
 # tauri generated
 recorder-app/src-tauri/gen/
 
-# uploaded VODs — a single match is ~24 GB across a 5-stack
+# local review data (matches, notes, comments, scoreboards)
 data/
+
+# vercel cli
+.vercel/
 
 # logs and local scratch
 *.log
