@@ -144,21 +144,26 @@ What is confusing, and worth writing down so the next person does not chase it:
   blanket refusal of everything newly compiled.
 - `recorder-proto.exe` from earlier the same day still runs. SAC's verdicts are
   reputation-based and per-file, and it had already blessed that one.
+- A **later** rebuild, with SAC still enforcing, was allowed. A block is not a
+  new steady state and rebuilds are not doomed — retry before concluding
+  anything.
 
 So it is not predictable from the build, and **a working unsigned binary is a
 scarce resource**: rebuilding overwrites it via cargo's hardlink and there is no
 way back, since the previous artifact in `deps/` is replaced too. Copy a known
-good `recorder-app.exe` somewhere else before rebuilding if you need to keep the
-ability to record that day.
+good `recorder-app.exe` aside before rebuilding — `D:\dev\vc-known-good` on this
+rig — so a bad verdict costs a retry rather than the evening.
 
-There are only two real fixes, and neither is free:
+**Do not turn SAC off over a single block.** Turning it off is irreversible —
+re-enabling requires reinstalling Windows — and the evidence above says the next
+build may well be fine. It is the nuclear option, not the fix.
 
-1. **Turn Smart App Control off.** Windows Security → App & browser control →
-   Smart App Control → Off. This is **irreversible** — re-enabling it requires
-   reinstalling Windows — and it lowers the machine's protection generally.
-2. **Sign the binary** with a certificate from a CA that SAC trusts. Self-signed
-   certificates do not work, however they are installed locally: SAC ignores
-   additions to the local trust store by design.
+The one permanent fix is to **sign the binary** with a certificate from a CA that
+SAC trusts. Self-signed certificates do not work however they are installed
+locally: SAC ignores additions to the local trust store by design. For an
+open-source project with a public repo, the SignPath Foundation
+(<https://signpath.org/>) issues certificates for free, which would also remove
+the WGC capture border that ADR §1 wants MSIX for.
 
 Meanwhile `recorder-proto` (`probe|capture|record|replay|audio`) still runs and
 records full matches, which is what gets uploaded anyway.
