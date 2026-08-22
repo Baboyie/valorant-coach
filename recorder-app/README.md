@@ -17,7 +17,15 @@ buffering continues. Quit from the tray menu, which lets the engine finalise any
 open file first.
 
 With Valorant running it starts buffering automatically. Press **Alt+F10** in
-game to save the last 30 seconds. Clips land in `Videos\DEBRIEF`.
+game to save the last 30 seconds. Clips land in `Videos\DEBRIEF\clips`,
+recordings in `Videos\DEBRIEF\recordings`, and both show in the in-app
+gallery, which plays them over a self-served `media:` scheme with range
+support, so seeking a multi-GB recording is instant. If a video will not play,
+`%APPDATA%\DEBRIEF\media.log` says what the handler saw.
+
+Clicking **Start recording** while the game is minimised — which is what
+tabbing out of exclusive fullscreen does — queues the recording, restores the
+game, and starts the moment the window has a real size again.
 
 ## Architecture
 
@@ -179,5 +187,6 @@ records full matches, which is what gets uploaded anyway.
 
 - Not code-signed, so Smart App Control blocks it on machines that enforce it.
 - Not packaged as MSIX, so WGC draws its yellow capture border (ADR §1).
-- Clips list is not in the UI; "Show in Explorer" reveals the last one.
+- Gallery has no thumbnails; rows are text. A thumbnail means decoding one
+  frame per file through a Media Foundation source reader.
 - The engine's `SetWinEventHook` detection is the fallback, not the primary path.
