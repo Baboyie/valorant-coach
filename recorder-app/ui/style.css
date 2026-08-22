@@ -119,3 +119,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .check input { flex: none; width: auto; accent-color: var(--accent); cursor: pointer; }
 
 footer { text-align: center; margin-top: 4px; }
+
+/* A square, secondary button for one glyph — the picker's re-scan. */
+button.icon { flex: none; width: 34px; padding: 6px 0; font-size: 15px; line-height: 1; }
+select { flex: 1; min-width: 0; }

@@ -61,7 +61,8 @@ restart.
 | `bitrate_mbps` | 0 = derive from resolution and frame rate (~12 Mbps at 1080p60) |
 | `save_hotkey` | Tauri accelerator syntax. Default `Alt+F10`, not a bare function key: Valorant binds those, and a global hotkey that shadows a game binding is experienced as the game breaking |
 | `output_dir` | default `Videos\DEBRIEF` |
-| `auto_buffer` | start buffering as soon as Valorant appears |
+| `auto_buffer` | start buffering as soon as the target appears |
+| `target` | what to record: `{"kind":"valorant"}` (default), a whole screen `{"kind":"monitor","device":"\\.\DISPLAY1"}`, or one window `{"kind":"window","title":"...","class":"..."}`. The UI fills this from a Discord-style picker; saved by identity, not handle, so it survives restarts. A window target follows the *window*, not the title — a browser retitling itself on a tab switch does not end the session. §29 performance numbers are only measured for Valorant; a 1440p/4K monitor is more pixels than a 1080p game window and encodes accordingly |
 | `capture_audio` | record desktop audio via WASAPI loopback (default on) — what the player hears, game and comms together |
 | `capture_mic` | record the microphone as a **separate track** (default off), so a reviewer can isolate or mute the player's own voice. Off by default because many machines have no usable microphone, and a silent extra track is worse than none |
 

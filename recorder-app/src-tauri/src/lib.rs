@@ -71,6 +71,17 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Everything a person could choose to record, for the picker. Enumerated on
+/// demand rather than cached: windows come and go, and a stale list is how
+/// someone records the wrong thing.
+#[tauri::command]
+fn list_targets() -> serde_json::Value {
+    serde_json::json!({
+        "monitors": recorder_core::capture::list_monitors(),
+        "windows": recorder_core::capture::list_windows(),
+    })
+}
+
 /* ---------------------------------------------------------------- setup */
 
 fn show_main_window(app: &AppHandle) {
@@ -200,6 +211,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             reveal_in_explorer,
+            list_targets,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

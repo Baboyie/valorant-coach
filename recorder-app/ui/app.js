@@ -13,24 +13,55 @@ async function loadConfig() {
   el("outdir").value = cfg.output_dir;
   el("capaudio").checked = cfg.capture_audio;
   el("capmic").checked = cfg.capture_mic;
-  el("target").value = cfg.target || "valorant";
+  await refreshTargets();
   el("hotkeyhint").textContent = `Press ${cfg.save_hotkey} in game to save the last ${cfg.window_secs}s.`;
 }
 
+// The picker is rebuilt from a live scan: windows come and go, and a stale
+// list is how someone records the wrong thing. The current target stays
+// selected even when it is not available right now, so a saved screen that is
+// unplugged still shows as chosen rather than silently turning into Valorant.
+const targetKey = (t) => JSON.stringify(t);
+
+async function refreshTargets() {
+  const sel = el("target");
+  const { monitors, windows } = await invoke("list_targets");
+  const opts = [
+    { t: { kind: "valorant" }, label: "Valorant (auto-detect)" },
+    ...monitors.map((m) => ({
+      t: { kind: "monitor", device: m.device },
+      label: `Screen ${m.index} — ${m.width}×${m.height}${m.primary ? " (primary)" : ""}`,
+    })),
+    ...windows.map((w) => ({
+      t: { kind: "window", title: w.title, class: w.class },
+      label: `Window — ${w.title}`,
+    })),
+  ];
+  const current = cfg && cfg.target ? cfg.target : { kind: "valorant" };
+  if (!opts.some((o) => targetKey(o.t) === targetKey(current))) {
+    const what = current.kind === "monitor" ? current.device : current.title;
+    opts.splice(1, 0, { t: current, label: `(not available now) ${what}` });
+  }
+  sel.innerHTML = "";
+  for (const o of opts) {
+    const opt = document.createElement("option");
+    opt.value = targetKey(o.t);
+    opt.textContent = o.label;
+    sel.appendChild(opt);
+  }
+  sel.value = targetKey(current);
+}
+
 function fmtState(s) {
-  // In foreground mode the target is whatever window was chosen, so name it —
-  // “buffering: Notepad” — rather than leaving the user to find out from the
+  // Name the target unless it is Valorant, whose name is the product's —
+  // “buffering: Notepad” rather than leaving the user to find out from the
   // clip which window they actually recorded.
-  const named = (verb) =>
-    cfg && cfg.target === "foreground" && s.target_title
-      ? `${verb}: ${s.target_title}`
-      : verb;
+  const auto = !cfg || !cfg.target || cfg.target.kind === "valorant";
+  const named = (verb) => (!auto && s.target_title ? `${verb}: ${s.target_title}` : verb);
   if (s.state === "recording") return named("recording");
   if (s.state === "buffering") return named("buffering");
   if (s.game_running) return named("starting…");
-  return cfg && cfg.target === "foreground"
-    ? "click into the window you want to record"
-    : "waiting for Valorant";
+  return auto ? "waiting for Valorant" : "chosen window or screen is not available";
 }
 
 async function tick() {
@@ -104,6 +135,22 @@ el("record").addEventListener("click", async () => {
   await invoke(s.state === "recording" ? "stop_recording" : "start_recording");
 });
 
+// Picking a target applies immediately — it is a choice, not a setting, and
+// Discord trained everyone to expect the share to start on the click.
+el("target").addEventListener("change", async () => {
+  const next = { ...cfg, target: JSON.parse(el("target").value) };
+  try {
+    await invoke("set_config", { newConfig: next });
+    cfg = next;
+    el("saved").textContent = "target applied";
+    setTimeout(() => (el("saved").textContent = ""), 2500);
+  } catch (e) {
+    el("saved").textContent = "could not apply: " + e;
+  }
+});
+
+el("refreshTargets").addEventListener("click", refreshTargets);
+
 el("reveal").addEventListener("click", () => {
   if (lastClipPath) invoke("reveal_in_explorer", { path: lastClipPath });
 });
@@ -118,7 +165,7 @@ el("save").addEventListener("click", async () => {
     output_dir: el("outdir").value,
     capture_audio: el("capaudio").checked,
     capture_mic: el("capmic").checked,
-    target: el("target").value,
+    target: JSON.parse(el("target").value),
   };
   try {
     await invoke("set_config", { newConfig: next });

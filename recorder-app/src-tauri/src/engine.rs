@@ -236,11 +236,9 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
     // on this thread, which would complicate the frame loop; the fallback alone
     // is cheap enough that the refinement can wait.
     let mut next_detect = Instant::now();
-    // Foreground-mode memory: the last window used outside DEBRIEF, and the
-    // window the live session actually captures. Both live on this thread
-    // only; HWNDs never cross to the UI.
-    let mut last_fg: Option<windows::Win32::Foundation::HWND> = None;
-    let mut locked: Option<windows::Win32::Foundation::HWND> = None;
+    // What the live session captures. Lives on this thread only; handles never
+    // cross to the UI, which sees a label.
+    let mut locked: Option<capture::Source> = None;
 
     loop {
         // ---- commands -------------------------------------------------
@@ -249,64 +247,62 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
                 teardown(&mut session, &status, &config);
                 break;
             }
-            Ok(cmd) => handle_cmd(cmd, &mut session, &mut config, &status, &mut last_fg, &mut locked),
+            Ok(cmd) => handle_cmd(cmd, &mut session, &mut config, &status, &mut locked),
             Err(TryRecvError::Empty) => {}
         }
 
         // ---- detection ------------------------------------------------
         if Instant::now() >= next_detect {
             next_detect = Instant::now() + Duration::from_secs(2);
-            let hwnd = find_target(config.target, &mut last_fg);
-            {
-                let mut s = status.lock().unwrap();
-                s.game_running = hwnd.is_some();
-                // While idle this is what *would* be recorded; once a session
-                // starts it is pinned to the session's window below.
-                if matches!(session, Session::None) {
-                    s.target_title = hwnd.and_then(capture::window_title);
-                }
+            // A session that ended by any route — stop button, reconfigure,
+            // error — leaves no lock behind.
+            if matches!(session, Session::None) {
+                locked = None;
             }
-            match (&session, hwnd) {
-                // Game appeared and we should be buffering.
-                (Session::None, Some(h)) if config.auto_buffer => {
-                    match start_buffering(h, &config) {
-                        Ok((new, adapter3)) => {
-                            session = new;
-                            adapter = adapter3;
-                            locked = Some(h);
-                            status.lock().unwrap().target_title =
-                                capture::window_title(h);
-                            clear_error(&status);
-                        }
-                        Err(e) => {
-                            // Most likely the window is minimised — the capture
-                            // core refuses degenerate sizes (ADR §8). Retry on
-                            // the next tick rather than giving up for good.
-                            set_error(&status, &format!("could not start buffering: {e}"));
+            match locked {
+                // Idle: resolve the configured target and, if wanted, start.
+                None => {
+                    let found = find_target(&config.target);
+                    {
+                        let mut s = status.lock().unwrap();
+                        s.game_running = found.is_some();
+                        // What *would* be recorded, so the UI can name it
+                        // before anything starts.
+                        s.target_title = found.and_then(|f| f.label());
+                    }
+                    if let (Some(src), true) = (found, config.auto_buffer) {
+                        match start_buffering(src, &config) {
+                            Ok((new, adapter3)) => {
+                                session = new;
+                                adapter = adapter3;
+                                locked = Some(src);
+                                clear_error(&status);
+                            }
+                            Err(e) => {
+                                // Most likely the window is minimised — the
+                                // capture core refuses degenerate sizes (ADR
+                                // §8). Retry on the next tick rather than
+                                // giving up for good.
+                                set_error(&status, &format!("could not start buffering: {e}"));
+                            }
                         }
                     }
                 }
-                // Target vanished mid-session: stop cleanly. A recording loses
-                // nothing — finish() still writes the moov atom.
-                //
-                // "Vanished" is mode-specific. In Valorant mode the game not
-                // being findable is exactly the signal. In foreground mode
-                // hwnd goes None whenever the user focuses DEBRIEF itself, so
-                // only the *captured* window ceasing to exist counts — losing
-                // focus is not losing the window.
-                (Session::Buffering { .. }, None) | (Session::Recording { .. }, None)
-                    if config.target == crate::config::Target::Valorant =>
-                {
-                    teardown(&mut session, &status, &config);
+                // Live: the only question is whether the captured thing still
+                // exists. Not whether it is focused, and not whether its title
+                // still matches — a browser retitles itself on every tab
+                // switch, and a session that died on that would be useless.
+                // A recording loses nothing on teardown: finish() still writes
+                // the moov atom.
+                Some(src) => {
+                    if !src.alive() {
+                        teardown(&mut session, &status, &config);
+                        locked = None;
+                        let mut s = status.lock().unwrap();
+                        s.game_running = false;
+                        s.target_title = None;
+                    }
                 }
-                (Session::Buffering { .. }, _) | (Session::Recording { .. }, _)
-                    if config.target == crate::config::Target::Foreground
-                        && locked_gone(locked) =>
-                {
-                    teardown(&mut session, &status, &config);
-                    locked = None;
-                }
-                _ => {}
             }
         }
 
@@ -340,8 +336,7 @@ fn handle_cmd(
     session: &mut Session,
     config: &mut Config,
     status: &Arc<Mutex<Status>>,
-    last_fg: &mut Option<windows::Win32::Foundation::HWND>,
-    locked: &mut Option<windows::Win32::Foundation::HWND>,
+    locked: &mut Option<capture::Source>,
 ) {
     match cmd {
         Cmd::SaveClip => match session {
@@ -406,13 +401,13 @@ fn handle_cmd(
             if let Session::Recording { .. } = session {
                 return;
             }
-            let Some(hwnd) = find_target(config.target, last_fg) else {
+            let Some(src) = find_target(&config.target) else {
                 set_error(
                     status,
-                    match config.target {
-                        crate::config::Target::Valorant => "Valorant is not running",
-                        crate::config::Target::Foreground =>
-                            "no window to record yet — click into the window you want first",
+                    if config.target.is_valorant() {
+                        "Valorant is not running"
+                    } else {
+                        "the chosen window or screen is not available — pick another"
                     },
                 );
                 return;
@@ -420,20 +415,24 @@ fn handle_cmd(
             // Drop the buffering session first: one capture session per target,
             // and v1 does not run two encoders at once.
             teardown(session, status, config);
-            match start_recording(hwnd, config) {
+            match start_recording(src, config) {
                 Ok(new) => {
                     *session = new;
-                    *locked = Some(hwnd);
-                    status.lock().unwrap().target_title = capture::window_title(hwnd);
+                    *locked = Some(src);
+                    status.lock().unwrap().target_title = src.label();
                     clear_error(status);
                 }
-                Err(e) => set_error(status, &format!("could not start recording: {e}")),
+                Err(e) => {
+                    *locked = None;
+                    set_error(status, &format!("could not start recording: {e}"));
+                }
             }
         }
 
         Cmd::StopRecording => {
             if let Session::Recording { .. } = session {
                 teardown(session, status, config);
+                *locked = None;
             }
         }
 
@@ -445,7 +444,6 @@ fn handle_cmd(
             // resuming on whatever the previous mode had chosen.
             teardown(session, status, config);
             *locked = None;
-            *last_fg = None;
         }
 
         Cmd::Shutdown => unreachable!("handled by the caller"),
@@ -454,50 +452,25 @@ fn handle_cmd(
 
 /// The window to record.
 ///
-/// Whether the window a session locked onto has ceased to exist. Minimised
-/// still exists; closed does not.
-fn locked_gone(locked: Option<windows::Win32::Foundation::HWND>) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
-    match locked {
-        // No lock recorded means nothing to declare dead — the Valorant arm
-        // handles its own detection.
-        None => false,
-        Some(h) => !unsafe { IsWindow(Some(h)) }.as_bool(),
-    }
-}
-
-/// `DEBRIEF_TEST_FOREGROUND=1` substitutes the foreground window for the game
-/// regardless of configured target, kept for scripted tests. Otherwise the
-/// configured target decides.
+/// Resolve the configured target to something capturable, right now.
 ///
-/// Foreground mode records **the last window used outside DEBRIEF**, not the
-/// literal foreground window: at the moment anyone clicks a button in this
-/// app, the literal foreground window is this app. `last_fg` carries that
-/// memory between detection ticks; a window that has since closed is dropped
-/// rather than handed to the capture core.
-fn find_target(
-    target: crate::config::Target,
-    last_fg: &mut Option<windows::Win32::Foundation::HWND>,
-) -> Option<windows::Win32::Foundation::HWND> {
-    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+/// `DEBRIEF_TEST_FOREGROUND=1` substitutes the foreground window regardless
+/// of configuration, kept for scripted tests. Otherwise the saved identity is
+/// looked up fresh: a window by title and class, a monitor by device name,
+/// Valorant by its window class.
+fn find_target(target: &crate::config::Target) -> Option<capture::Source> {
+    use crate::config::Target;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
     if std::env::var("DEBRIEF_TEST_FOREGROUND").is_ok() {
-        let h = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-        return if h.0.is_null() { None } else { Some(h) };
+        let h = unsafe { GetForegroundWindow() };
+        return if h.0.is_null() { None } else { Some(capture::Source::Window(h)) };
     }
     match target {
-        crate::config::Target::Valorant => capture::find_valorant(),
-        crate::config::Target::Foreground => {
-            if let Some(h) = capture::find_foreground_other() {
-                *last_fg = Some(h);
-            }
-            // A remembered window that no longer exists is not a target.
-            if let Some(h) = *last_fg {
-                if !unsafe { IsWindow(Some(h)) }.as_bool() {
-                    *last_fg = None;
-                }
-            }
-            *last_fg
+        Target::Valorant => capture::find_valorant().map(capture::Source::Window),
+        Target::Monitor { device } => capture::find_monitor(device).map(capture::Source::Monitor),
+        Target::Window { title, class } => {
+            capture::find_window_by_identity(title, class).map(capture::Source::Window)
         }
     }
 }
@@ -505,12 +478,12 @@ fn find_target(
 /// Returns the session and the adapter it runs on, so the §17 monitor can read
 /// VRAM from the same device the pipeline uses rather than guessing which GPU.
 fn start_buffering(
-    hwnd: windows::Win32::Foundation::HWND,
+    source: capture::Source,
     config: &Config,
 ) -> windows::core::Result<(Session, Option<windows::Win32::Graphics::Dxgi::IDXGIAdapter3>)> {
     let dev = d3d::Device::new()?;
     let adapter = dev.adapter3().ok();
-    let (cap, frames) = capture::Capture::for_window(&dev, hwnd, config.fps, 6)?;
+    let (cap, frames) = capture::Capture::for_source(&dev, source, config.fps, 6)?;
     let w = cap.size.Width as u32;
     let h = cap.size.Height as u32;
     let gop_frames = encoder::EncoderConfig::default_gop(config.fps);
@@ -541,9 +514,9 @@ fn start_buffering(
     ))
 }
 
-fn start_recording(hwnd: windows::Win32::Foundation::HWND, config: &Config) -> windows::core::Result<Session> {
+fn start_recording(source: capture::Source, config: &Config) -> windows::core::Result<Session> {
     let dev = d3d::Device::new()?;
-    let (cap, frames) = capture::Capture::for_window(&dev, hwnd, config.fps, 6)?;
+    let (cap, frames) = capture::Capture::for_source(&dev, source, config.fps, 6)?;
     let w = cap.size.Width as u32;
     let h = cap.size.Height as u32;
     let cfg = encoder::EncoderConfig {

@@ -558,3 +558,224 @@ pub fn window_title(hwnd: HWND) -> Option<String> {
     }
     Some(String::from_utf16_lossy(&buf[..n as usize]).trim_end().to_string())
 }
+
+/* ------------------------------------------------------------ sources */
+
+/// What a capture session is built over. Windows and monitors are the two
+/// things Windows.Graphics.Capture can wrap; the rest of the pipeline is
+/// identical for both, so the choice is confined to construction.
+#[derive(Debug, Clone, Copy)]
+pub enum Source {
+    Window(HWND),
+    Monitor(windows::Win32::Graphics::Gdi::HMONITOR),
+}
+
+impl Source {
+    /// Whether the thing behind the handle still exists. A minimised window
+    /// still exists; a closed one does not. An unplugged monitor does not.
+    pub fn alive(&self) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+        match *self {
+            Source::Window(h) => unsafe { IsWindow(Some(h)) }.as_bool(),
+            Source::Monitor(m) => list_monitors().iter().any(|i| i.hmonitor == m.0 as isize),
+        }
+    }
+
+    /// A human label for status: the window title, or "Screen 2 (primary)".
+    pub fn label(&self) -> Option<String> {
+        match *self {
+            Source::Window(h) => window_title(h),
+            Source::Monitor(m) => list_monitors()
+                .iter()
+                .find(|i| i.hmonitor == m.0 as isize)
+                .map(MonitorInfo::label),
+        }
+    }
+}
+
+impl Capture {
+    /// Build a capture session over a whole monitor.
+    pub fn for_monitor(
+        dev: &d3d::Device,
+        monitor: windows::Win32::Graphics::Gdi::HMONITOR,
+        target_fps: u32,
+        ring_len: usize,
+    ) -> Result<(Capture, Frames)> {
+        let interop: IGraphicsCaptureItemInterop =
+            windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+        let item: GraphicsCaptureItem = unsafe { interop.CreateForMonitor(monitor)? };
+        Self::build(dev, item, target_fps, ring_len)
+    }
+
+    pub fn for_source(
+        dev: &d3d::Device,
+        source: Source,
+        target_fps: u32,
+        ring_len: usize,
+    ) -> Result<(Capture, Frames)> {
+        match source {
+            Source::Window(h) => Self::for_window(dev, h, target_fps, ring_len),
+            Source::Monitor(m) => Self::for_monitor(dev, m, target_fps, ring_len),
+        }
+    }
+}
+
+/* ------------------------------------------------------- enumeration */
+
+/// A window someone might choose to record. The handle is an `isize` so the
+/// struct serialises; it is only ever used on the thread that produced it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WindowInfo {
+    pub hwnd: isize,
+    pub title: String,
+    pub class: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MonitorInfo {
+    pub hmonitor: isize,
+    /// `\\.\DISPLAY1` — the stable identity, which survives restarts where the
+    /// handle does not.
+    pub device: String,
+    pub width: i32,
+    pub height: i32,
+    pub primary: bool,
+    /// 1-based, in enumeration order, for display only.
+    pub index: usize,
+}
+
+impl MonitorInfo {
+    pub fn label(&self) -> String {
+        format!(
+            "Screen {} — {}×{}{}",
+            self.index,
+            self.width,
+            self.height,
+            if self.primary { " (primary)" } else { "" }
+        )
+    }
+}
+
+/// Top-level windows a person would recognise from alt-tab.
+///
+/// The filters are the alt-tab filters: visible, titled, not a tool window, not
+/// minimised (WGC composites nothing for an iconic window), not cloaked (UWP
+/// apps keep "visible" windows that are not actually on screen, and they show
+/// up as ghost entries in any naive list), and not ours.
+pub fn list_windows() -> Vec<WindowInfo> {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::LPARAM;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic,
+        IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+    };
+
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let out = unsafe { &mut *(lparam.0 as *mut Vec<WindowInfo>) };
+        let keep = (|| {
+            if !unsafe { IsWindowVisible(hwnd) }.as_bool() || unsafe { IsIconic(hwnd) }.as_bool() {
+                return None;
+            }
+            let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+            if ex & WS_EX_TOOLWINDOW.0 != 0 {
+                return None;
+            }
+            let mut cloaked: u32 = 0;
+            let _ = unsafe {
+                DwmGetWindowAttribute(
+                    hwnd,
+                    DWMWA_CLOAKED,
+                    &mut cloaked as *mut u32 as *mut _,
+                    std::mem::size_of::<u32>() as u32,
+                )
+            };
+            if cloaked != 0 {
+                return None;
+            }
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+            if pid == unsafe { GetCurrentProcessId() } {
+                return None;
+            }
+            let title = window_title(hwnd)?;
+            if title.is_empty() {
+                return None;
+            }
+            let mut buf = [0u16; 256];
+            let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+            let class = if n > 0 { String::from_utf16_lossy(&buf[..n as usize]) } else { String::new() };
+            Some(WindowInfo { hwnd: hwnd.0 as isize, title, class })
+        })();
+        if let Some(w) = keep {
+            out.push(w);
+        }
+        BOOL(1)
+    }
+
+    let mut out: Vec<WindowInfo> = Vec::new();
+    let _ = unsafe { EnumWindows(Some(cb), LPARAM(&mut out as *mut _ as isize)) };
+    out
+}
+
+pub fn list_monitors() -> Vec<MonitorInfo> {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{LPARAM, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO, MONITORINFOEXW,
+    };
+    // MONITORINFOF_PRIMARY, which this crate version does not export.
+    const PRIMARY: u32 = 1;
+
+    unsafe extern "system" fn cb(m: HMONITOR, _dc: HDC, _r: *mut RECT, lparam: LPARAM) -> BOOL {
+        let out = unsafe { &mut *(lparam.0 as *mut Vec<MonitorInfo>) };
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if unsafe { GetMonitorInfoW(m, &mut info as *mut MONITORINFOEXW as *mut MONITORINFO) }.as_bool() {
+            let r = info.monitorInfo.rcMonitor;
+            let end = info.szDevice.iter().position(|&c| c == 0).unwrap_or(info.szDevice.len());
+            out.push(MonitorInfo {
+                hmonitor: m.0 as isize,
+                device: String::from_utf16_lossy(&info.szDevice[..end]),
+                width: r.right - r.left,
+                height: r.bottom - r.top,
+                primary: info.monitorInfo.dwFlags & PRIMARY != 0,
+                index: out.len() + 1,
+            });
+        }
+        BOOL(1)
+    }
+
+    let mut out: Vec<MonitorInfo> = Vec::new();
+    let _ = unsafe { EnumDisplayMonitors(None, None, Some(cb), LPARAM(&mut out as *mut _ as isize)) };
+    out
+}
+
+/// Find a monitor by device name, which is what a saved setting holds. The
+/// primary monitor is a reasonable answer for a name that no longer exists —
+/// a laptop undocked from the screen it was recording — so a target that was
+/// "some monitor" never silently becomes "nothing".
+pub fn find_monitor(device: &str) -> Option<windows::Win32::Graphics::Gdi::HMONITOR> {
+    let all = list_monitors();
+    all.iter()
+        .find(|m| m.device == device)
+        .or_else(|| all.iter().find(|m| m.primary))
+        .or_else(|| all.first())
+        .map(|m| windows::Win32::Graphics::Gdi::HMONITOR(m.hmonitor as *mut _))
+}
+
+/// Find a window by the identity a saved setting holds.
+///
+/// Exact title and class first. Failing that, the only window of that class —
+/// because titles move: a browser retitles itself on every tab switch, and a
+/// setting that broke whenever the user changed tab would be worse than none.
+pub fn find_window_by_identity(title: &str, class: &str) -> Option<HWND> {
+    let all = list_windows();
+    let exact = all.iter().find(|w| w.class == class && w.title == title);
+    let found = exact.or_else(|| {
+        let same_class: Vec<&WindowInfo> = all.iter().filter(|w| w.class == class).collect();
+        if same_class.len() == 1 { Some(same_class[0]) } else { None }
+    });
+    found.map(|w| HWND(w.hwnd as *mut _))
+}

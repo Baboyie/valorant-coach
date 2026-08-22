@@ -144,16 +144,15 @@ Also outstanding but lower value for now: Competitive/Quality/Custom presets
 
 In the order they are cheap, not the order they were asked.
 
-**Tray on minimize.** `lib.rs` handles `CloseRequested` and hides the window;
-minimize is simply not handled. A few lines. The only judgement call is whether
-minimize should hide entirely (no taskbar entry) or stay minimized as now.
+**~~Tray on minimize~~. Done 2026-08-22** — minimize hides to the tray like
+close does; the tray icon restores.
 
-**Not Valorant-only.** `engine.rs` already has the escape hatch:
-`DEBRIEF_TEST_FOREGROUND=1` substitutes the foreground window for the game, and
-the capture layer takes any `HWND`. This is promoting a test affordance into a
-real feature — a target picker (game / foreground window / specific window /
-monitor) — not new capture work. Note the §29 performance numbers stay a
-Valorant-at-240fps claim regardless of what else it can record.
+**~~Not Valorant-only~~. Done 2026-08-22** — a Discord-style picker: Valorant
+(auto-detect), any monitor, or any alt-tab window. Targets persist by identity
+(device name / title+class), never by handle; a window target follows the
+window when its title changes, and the session ends only when the window
+closes. `capture::Source` confines the choice to construction — the pipeline
+never learns which it got. The §29 numbers stay a Valorant-only claim.
 
 **Gallery.** Already listed under Known gaps in `recorder-app/README.md`. Needs
 a file list built from the `.json` sidecars beside each MP4 (they already carry

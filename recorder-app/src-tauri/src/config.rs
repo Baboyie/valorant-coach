@@ -8,21 +8,67 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// What to record.
+///
+/// Persisted by *identity* rather than by handle: a window handle means nothing
+/// after a restart, while a monitor's device name and a window's title and
+/// class do. The engine resolves the identity to a live handle on each
+/// detection tick.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Target {
-    /// Record Valorant, found by window class. The default, and the only mode
-    /// the §29 performance claims speak for.
+    /// Valorant, found by window class. The default, and the only target the
+    /// §29 performance claims speak for.
     Valorant,
-    /// Record the last window used outside DEBRIEF. The window is chosen when
-    /// buffering starts and stays chosen — alt-tabbing mid-session does not
-    /// switch what is being recorded, which is what makes the mode predictable.
-    Foreground,
+    /// A whole monitor, by device name (`\\.\DISPLAY1`).
+    Monitor { device: String },
+    /// One window, by title and class. Titles move — a browser retitles itself
+    /// on every tab switch — so the engine falls back to "the only window of
+    /// this class" when the exact title is gone.
+    Window { title: String, class: String },
 }
 
 impl Default for Target {
     fn default() -> Self {
         Target::Valorant
+    }
+}
+
+impl Target {
+    pub fn is_valorant(&self) -> bool {
+        matches!(self, Target::Valorant)
+    }
+}
+
+// Accepts the tagged form above and the first shipped form, which was a bare
+// string — `"valorant"` or `"foreground"`. A config that fails to parse falls
+// back to defaults *wholesale*, taking the player name and hotkey with it, so
+// one stale field must not be allowed to do that.
+impl<'de> Deserialize<'de> for Target {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "kind", rename_all = "lowercase")]
+        enum Tagged {
+            Valorant,
+            Monitor { device: String },
+            Window { title: String, class: String },
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Tagged(Tagged),
+            // Anything else at all: the first shipped form was a bare string,
+            // and a hand-edited config can hold worse. Tried last, so it only
+            // catches what the tagged form rejected.
+            Legacy(serde::de::IgnoredAny),
+        }
+        Ok(match Repr::deserialize(d)? {
+            // "foreground" carried no persistent identity to bring forward.
+            Repr::Legacy(_) => Target::Valorant,
+            Repr::Tagged(Tagged::Valorant) => Target::Valorant,
+            Repr::Tagged(Tagged::Monitor { device }) => Target::Monitor { device },
+            Repr::Tagged(Tagged::Window { title, class }) => Target::Window { title, class },
+        })
     }
 }
 
@@ -43,11 +89,9 @@ pub struct Config {
     pub save_hotkey: String,
     /// Whether to start buffering automatically when the target appears.
     pub auto_buffer: bool,
-    /// What to record. `Valorant` is the product; `Foreground` exists because
-    /// teammates asked to record other things, and the capture layer never
-    /// cared — it takes any HWND. In foreground mode the engine locks onto the
-    /// last window used *outside* DEBRIEF: at the moment anyone clicks a
-    /// button in this app, the literal foreground window is this app.
+    /// What to record. `Valorant` is the product; windows and monitors exist
+    /// because teammates asked to record other things, and the capture layer
+    /// never cared — it wraps whatever Windows.Graphics.Capture can.
     pub target: Target,
     /// Record desktop audio (WASAPI loopback) alongside video.
     pub capture_audio: bool,

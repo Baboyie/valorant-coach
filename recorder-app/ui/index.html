@@ -72,15 +72,13 @@
     <div class="field">
       <label for="target">Record</label>
       <div class="row">
-        <select id="target">
-          <option value="valorant">Valorant</option>
-          <option value="foreground">Last active window</option>
-        </select>
+        <select id="target"></select>
+        <button id="refreshTargets" class="icon" title="Re-scan windows and screens">↻</button>
       </div>
       <p class="muted small note">
-        “Last active window” records whatever you were using before switching
-        to DEBRIEF, and stays on it — alt-tabbing mid-recording does not change
-        the target. Performance numbers are only measured for Valorant.
+        Applies as soon as you pick. A window stays the target when you switch
+        away from it; the session ends only when it closes. Performance numbers
+        are only measured for Valorant.
       </p>
     </div>
     <div class="field">
