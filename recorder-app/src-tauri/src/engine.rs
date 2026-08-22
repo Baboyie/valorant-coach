@@ -386,7 +386,8 @@ fn handle_cmd(
     match cmd {
         Cmd::SaveClip => match session {
             Session::Buffering { ring, cfg, audio, .. } => {
-                let path = timestamped_path(&config.output_dir, "clip");
+                let path =
+                    timestamped_path(&config.output_dir.join(crate::media::CLIPS_DIR), "clip");
                 // Create the folder here rather than assuming it exists. The
                 // default is Videos\DEBRIEF, which will not exist on a first
                 // run, and the failure lands at the worst possible moment —
@@ -618,7 +619,8 @@ fn start_recording(source: capture::Source, config: &Config) -> windows::core::R
         bitrate: config.bitrate_for(w, h),
         gop_frames: encoder::EncoderConfig::default_gop(config.fps),
     };
-    let path = timestamped_path(&config.output_dir, "recording");
+    let path =
+        timestamped_path(&config.output_dir.join(crate::media::RECORDINGS_DIR), "recording");
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }

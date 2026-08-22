@@ -123,3 +123,25 @@ footer { text-align: center; margin-top: 4px; }
 /* A square, secondary button for one glyph — the picker's re-scan. */
 button.icon { flex: none; width: 34px; padding: 6px 0; font-size: 15px; line-height: 1; }
 select { flex: 1; min-width: 0; }
+
+/* ------------------------------------------------------------- gallery */
+
+.gal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.gal-head h2 { margin: 0; }
+.tabs { display: flex; gap: 6px; }
+.tab { padding: 5px 12px; font-size: 12px; }
+.tab.active { border-color: var(--accent); color: var(--accent); }
+
+ul.media { list-style: none; margin: 0; padding: 0; max-height: 264px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.media li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #0b0d15; border: 1px solid var(--line); border-radius: 8px; }
+.m-left { flex: 1; min-width: 0; }
+.m-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-meta { margin-top: 2px; }
+.media button { flex: none; padding: 6px 10px; font-size: 12px; }
+
+/* Full-window playback overlay. The window is a control surface; while a video
+   is open, it is a screening room instead. */
+.player { position: fixed; inset: 0; background: rgba(5, 6, 10, 0.94); display: flex; flex-direction: column; padding: 14px; z-index: 50; }
+.player-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
+.player-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player video { width: 100%; flex: 1; min-height: 0; background: #000; border-radius: 8px; outline: none; }

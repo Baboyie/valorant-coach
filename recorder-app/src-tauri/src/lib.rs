@@ -6,6 +6,7 @@
 
 mod config;
 mod engine;
+mod media;
 mod sysmon;
 mod vod;
 
@@ -60,12 +61,20 @@ fn set_config(
     Ok(())
 }
 
+/// The gallery's rows: every clip and recording in the output directory,
+/// sidecar metadata attached where a sidecar exists.
+#[tauri::command]
+fn list_media(state: tauri::State<'_, AppState>) -> Vec<media::MediaItem> {
+    let dir = state.config.lock().unwrap().output_dir.clone();
+    media::list(&dir)
+}
+
 /// Reveal a saved clip in Explorer. Selecting the file rather than opening the
 /// folder saves the user hunting for it among a hundred timestamps.
 #[tauri::command]
 fn reveal_in_explorer(path: String) -> Result<(), String> {
     std::process::Command::new("explorer.exe")
-        .arg(format!("/select,{path}"))
+        .arg(format!("/select,\"{path}\""))
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -165,6 +174,9 @@ pub fn run() {
     // Persist immediately so a first run leaves an editable file on disk
     // rather than a config that exists only in memory.
     let _ = cfg.save();
+    // One-time: move loose clip-*/recording-* files into clips/ and
+    // recordings/. Safe here because nothing is being written yet.
+    media::migrate_layout(&cfg.output_dir);
     let hotkey = cfg.save_hotkey.clone();
     let engine = Engine::spawn(cfg.clone());
 
@@ -184,6 +196,18 @@ pub fn run() {
             // it is already in the tray.
             show_main_window(app);
         }))
+        // Gallery playback. Serves .mp4 files from the output directory with
+        // HTTP range semantics, so the webview's <video> can seek a
+        // multi-gigabyte recording without anything loading it whole. The
+        // path is re-validated on every request; this scheme is the only
+        // bridge between the webview and the filesystem.
+        .register_uri_scheme_protocol("media", |ctx, request| {
+            let root = ctx
+                .app_handle()
+                .try_state::<AppState>()
+                .map(|s| s.config.lock().unwrap().output_dir.clone());
+            media::serve(root, request)
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -212,6 +236,7 @@ pub fn run() {
             stop_recording,
             reveal_in_explorer,
             list_targets,
+            list_media,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

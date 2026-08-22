@@ -3,6 +3,10 @@ const { invoke } = window.__TAURI__.core;
 const el = (id) => document.getElementById(id);
 let cfg = null;
 let lastClipPath = null;
+let prevState = null;
+let currentRecordingPath = null;
+let mediaItems = [];
+let mediaTab = "clip";
 
 async function loadConfig() {
   cfg = await invoke("get_config");
@@ -75,6 +79,12 @@ async function tick() {
     return;
   }
 
+  // A finished recording or a fresh clip should appear without anyone
+  // hunting for a refresh button.
+  if (prevState === "recording" && s.state !== "recording") loadMedia();
+  prevState = s.state;
+  currentRecordingPath = s.recording_path || null;
+
   el("dot").className = "dot " + s.state;
   el("state").textContent = fmtState(s);
 
@@ -116,6 +126,7 @@ async function tick() {
   el("record").className = rec ? "rec" : "";
 
   if (s.last_clip) {
+    if (lastClipPath && s.last_clip !== lastClipPath) loadMedia();
     lastClipPath = s.last_clip;
     el("lastwrap").classList.remove("hidden");
     el("lastclip").textContent =
@@ -181,5 +192,109 @@ el("save").addEventListener("click", async () => {
   }
 });
 
+/* --------------------------------------------------------------- gallery */
+
+const fmtDur = (secs) => {
+  if (secs == null) return "—";
+  const s = Math.round(secs);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+const fmtBytes = (b) => (b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : (b / 1e6).toFixed(1) + " MB");
+const fmtWhen = (m) => {
+  const ms = m.started_epoch_ms ?? m.modified_epoch_ms;
+  return new Date(ms).toLocaleString(undefined, {
+    weekday: "short", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+};
+
+async function loadMedia() {
+  try {
+    mediaItems = await invoke("list_media");
+  } catch {
+    mediaItems = [];
+  }
+  renderMedia();
+}
+
+function renderMedia() {
+  const list = el("mediaList");
+  list.innerHTML = "";
+  // The file being written right now is not watchable — no moov atom until
+  // finalise — so it stays out of the list rather than playing as broken.
+  const rows = mediaItems.filter(
+    (m) => m.kind === mediaTab && m.path !== currentRecordingPath
+  );
+  el("noMedia").classList.toggle("hidden", rows.length > 0);
+  for (const m of rows) {
+    const li = document.createElement("li");
+
+    const name = document.createElement("div");
+    name.className = "m-name";
+    name.textContent = m.player ? `${m.player} — ${m.name}` : m.name;
+    name.title = m.path;
+
+    const sub = document.createElement("div");
+    sub.className = "m-meta muted small";
+    sub.textContent = [
+      fmtWhen(m),
+      fmtDur(m.duration_secs),
+      m.width && m.height ? `${m.width}×${m.height}` : null,
+      fmtBytes(m.bytes),
+    ].filter(Boolean).join(" · ");
+
+    const left = document.createElement("div");
+    left.className = "m-left";
+    left.append(name, sub);
+
+    const play = document.createElement("button");
+    play.textContent = "Play";
+    play.addEventListener("click", () => openPlayer(m));
+
+    const show = document.createElement("button");
+    show.textContent = "Folder";
+    show.title = "Show in Explorer";
+    show.addEventListener("click", () => invoke("reveal_in_explorer", { path: m.path }));
+
+    li.append(left, play, show);
+    list.appendChild(li);
+  }
+}
+
+// The media: scheme is served by the app itself with range support, so seeking
+// works and nothing ever loads a whole recording into memory.
+const mediaSrc = (p) => "http://media.localhost/" + encodeURIComponent(p);
+
+function openPlayer(m) {
+  el("playerTitle").textContent = m.player ? `${m.player} — ${m.name}` : m.name;
+  const v = el("player");
+  v.src = mediaSrc(m.path);
+  el("playerWrap").classList.remove("hidden");
+  v.play().catch(() => {});
+}
+
+function closePlayer() {
+  const v = el("player");
+  v.pause();
+  v.removeAttribute("src");
+  v.load(); // actually releases the file handle
+  el("playerWrap").classList.add("hidden");
+}
+
+el("playerClose").addEventListener("click", closePlayer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !el("playerWrap").classList.contains("hidden")) closePlayer();
+});
+
+const setTab = (tab) => {
+  mediaTab = tab;
+  el("tabClips").classList.toggle("active", tab === "clip");
+  el("tabRecs").classList.toggle("active", tab === "recording");
+  renderMedia();
+};
+el("tabClips").addEventListener("click", () => setTab("clip"));
+el("tabRecs").addEventListener("click", () => setTab("recording"));
+
 loadConfig().then(tick);
+loadMedia();
 setInterval(tick, 500);
