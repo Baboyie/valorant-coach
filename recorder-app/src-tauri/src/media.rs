@@ -182,6 +182,27 @@ struct Slice {
     body: Vec<u8>,
 }
 
+/// Append one line to `%APPDATA%\DEBRIEF\media.log`.
+///
+/// The release build has no console, and a video element that fails to load
+/// shows nothing but 0:00 — no status, no reason. This is the only way to
+/// learn whether a request reached the handler at all, and what it decided.
+/// Truncated when it passes 256 KB so a long session of seeking cannot grow
+/// it without bound.
+fn log_line(msg: &str) {
+    let Some(base) = std::env::var_os("APPDATA") else { return };
+    let path = PathBuf::from(base).join("DEBRIEF").join("media.log");
+    if let Ok(md) = std::fs::metadata(&path) {
+        if md.len() > 256 * 1024 {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{} {msg}", crate::vod::now_utc().0);
+    }
+}
+
 /// Serve one gallery video with HTTP range semantics.
 ///
 /// Always 206, never a whole-file 200: a 200 body would mean materialising a
@@ -199,36 +220,66 @@ pub fn serve(
             .unwrap()
     };
 
+    let range = request
+        .headers()
+        .get("range")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    log_line(&format!(
+        "{} {} range={}",
+        request.method(),
+        request.uri(),
+        range.as_deref().unwrap_or("-")
+    ));
+
     let Some(root) = root else {
+        log_line("  -> 500 no state");
         return plain(500, "recorder state is not ready");
     };
     let path = PathBuf::from(percent_decode(request.uri().path().trim_start_matches('/')));
     if !is_servable(&root, &path) {
         // Wrong extension or outside the output directory. The distinction is
-        // deliberately not reported: this is the only line of defence between
-        // the webview and the filesystem.
+        // deliberately not reported to the caller: this is the only line of
+        // defence between the webview and the filesystem.
+        log_line(&format!("  -> 403 not servable: {} (root {})", path.display(), root.display()));
         return plain(403, "not a gallery file");
     }
 
-    let range = request
-        .headers()
-        .get("range")
-        .and_then(|v| v.to_str().ok());
-    match read_slice(&path, range) {
-        Ok(s) if !s.satisfiable => tauri::http::Response::builder()
-            .status(416)
-            .header("Content-Range", format!("bytes */{}", s.total))
-            .body(Vec::new())
-            .unwrap(),
-        Ok(s) => tauri::http::Response::builder()
-            .status(206)
-            .header("Content-Type", "video/mp4")
-            .header("Accept-Ranges", "bytes")
-            .header("Content-Range", format!("bytes {}-{}/{}", s.start, s.end, s.total))
-            .header("Content-Length", s.body.len().to_string())
-            .body(s.body)
-            .unwrap(),
-        Err(_) => plain(404, "not found"),
+    // CORS headers on everything. A <video> without `crossorigin` makes a
+    // no-cors request and should not need them, but http://media.localhost is
+    // a different origin from the page, and WebView2 has been known to want
+    // them anyway. They cost nothing.
+    let cors = |b: tauri::http::response::Builder| {
+        b.header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Headers", "Range")
+            .header("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
+    };
+    if request.method() == tauri::http::Method::OPTIONS {
+        return cors(tauri::http::Response::builder().status(204)).body(Vec::new()).unwrap();
+    }
+
+    match read_slice(&path, range.as_deref()) {
+        Ok(s) if !s.satisfiable => {
+            log_line(&format!("  -> 416 total={}", s.total));
+            cors(tauri::http::Response::builder().status(416))
+                .header("Content-Range", format!("bytes */{}", s.total))
+                .body(Vec::new())
+                .unwrap()
+        }
+        Ok(s) => {
+            log_line(&format!("  -> 206 {}-{}/{} ({} bytes)", s.start, s.end, s.total, s.body.len()));
+            cors(tauri::http::Response::builder().status(206))
+                .header("Content-Type", "video/mp4")
+                .header("Accept-Ranges", "bytes")
+                .header("Content-Range", format!("bytes {}-{}/{}", s.start, s.end, s.total))
+                .header("Content-Length", s.body.len().to_string())
+                .body(s.body)
+                .unwrap()
+        }
+        Err(e) => {
+            log_line(&format!("  -> 404 {e}"));
+            plain(404, "not found")
+        }
     }
 }
 

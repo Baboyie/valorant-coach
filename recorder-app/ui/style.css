@@ -142,6 +142,10 @@ ul.media { list-style: none; margin: 0; padding: 0; max-height: 264px; overflow-
 /* Full-window playback overlay. The window is a control surface; while a video
    is open, it is a screening room instead. */
 .player { position: fixed; inset: 0; background: rgba(5, 6, 10, 0.94); display: flex; flex-direction: column; padding: 14px; z-index: 50; }
+/* Outranks the generic .hidden rule, which this declaration would otherwise
+   beat on source order alone — the overlay shipped once covering the whole
+   app from launch, with no way to close what had never been opened. */
+.player.hidden { display: none; }
 .player-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
 .player-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player video { width: 100%; flex: 1; min-height: 0; background: #000; border-radius: 8px; outline: none; }

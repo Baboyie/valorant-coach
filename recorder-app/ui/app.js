@@ -281,6 +281,16 @@ function closePlayer() {
   el("playerWrap").classList.add("hidden");
 }
 
+// A <video> that cannot load shows 0:00 and nothing else. Put the reason
+// where the title was, so "stuck" becomes a code someone can act on:
+// 1 aborted, 2 network, 3 decode, 4 source not supported / blocked.
+el("player").addEventListener("error", () => {
+  const err = el("player").error;
+  const code = err ? err.code : "?";
+  const msg = err && err.message ? ` — ${err.message}` : "";
+  el("playerTitle").textContent = `could not play (media error ${code}${msg})`;
+});
+
 el("playerClose").addEventListener("click", closePlayer);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !el("playerWrap").classList.contains("hidden")) closePlayer();
