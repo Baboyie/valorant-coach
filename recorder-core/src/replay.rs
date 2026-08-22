@@ -77,20 +77,26 @@ struct AudioInner {
 pub enum AudioTrack {
     Desktop,
     Mic,
+    /// Desktop and microphone summed into one track. Its own slot rather than
+    /// reusing Desktop's, so a session that switches between mixed and
+    /// separate cannot leave one kind of packet buffered in the other's ring.
+    Mixed,
 }
 
 impl AudioTrack {
-    pub const ALL: [AudioTrack; 2] = [AudioTrack::Desktop, AudioTrack::Mic];
+    pub const ALL: [AudioTrack; 3] = [AudioTrack::Desktop, AudioTrack::Mic, AudioTrack::Mixed];
     fn index(self) -> usize {
         match self {
             AudioTrack::Desktop => 0,
             AudioTrack::Mic => 1,
+            AudioTrack::Mixed => 2,
         }
     }
     pub fn label(self) -> &'static str {
         match self {
             AudioTrack::Desktop => "desktop",
             AudioTrack::Mic => "mic",
+            AudioTrack::Mixed => "mixed",
         }
     }
 }

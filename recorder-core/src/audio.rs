@@ -13,7 +13,7 @@
 //! without a calibration fudge. Anything that assumed a constant packet cadence
 //! instead would drift exactly the way §7's muxing bug did.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc};
 
@@ -24,7 +24,9 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
     COINIT_MULTITHREADED,
 };
+use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
 use windows::Win32::System::Performance::QueryPerformanceFrequency;
+use windows::Win32::System::Variant::VT_LPWSTR;
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
 /// Which endpoint to record.
@@ -104,9 +106,16 @@ impl Default for AudioStats {
 pub struct AudioCapture {
     stop: Arc<AtomicBool>,
     join: Option<std::thread::JoinHandle<()>>,
+    /// Linear gain, as f32 bits. Shared with the capture thread so a slider
+    /// takes effect on the next packet — restarting capture to change volume
+    /// would drop audio and, on the replay path, discard the ring.
+    gain: Arc<AtomicU32>,
     pub format: AudioFormat,
     pub stats: Arc<AudioStats>,
     pub source: AudioSource,
+    /// The endpoint actually opened, which is not necessarily the one asked
+    /// for: a saved device that has been unplugged falls back to the default.
+    pub device: Option<AudioDevice>,
 }
 
 impl AudioCapture {
@@ -115,31 +124,69 @@ impl AudioCapture {
     /// Returns the receiver alongside the capture, so the consumer owns the
     /// queue and this struct owns only the thread.
     pub fn start(source: AudioSource) -> Result<(AudioCapture, Receiver<AudioChunk>)> {
+        Self::start_on(source, None, 1.0)
+    }
+
+    /// Capture a named endpoint at a given gain.
+    ///
+    /// `device_id` is an endpoint id as returned by [`list_devices`]. None means
+    /// the Windows default. An id that no longer resolves — the headset was
+    /// unplugged — falls back to the default rather than failing: recording
+    /// the wrong microphone is recoverable, recording nothing is not, and the
+    /// endpoint actually opened is reported back in `device`.
+    pub fn start_on(
+        source: AudioSource,
+        device_id: Option<&str>,
+        gain: f32,
+    ) -> Result<(AudioCapture, Receiver<AudioChunk>)> {
         // Probe the device format on this thread so failure is reported to the
         // caller, rather than disappearing into a thread that silently exits.
         // A machine with no microphone is the common case for the mic source,
         // and it must surface as a clean error, not a silent dead thread.
-        let format = probe_format(source)?;
+        let (format, device) = probe_format(source, device_id)?;
+        let opened_id = device.as_ref().map(|d| d.id.clone());
 
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(AudioStats::default());
+        let gain_bits = Arc::new(AtomicU32::new(gain.to_bits()));
 
         let thread_stop = Arc::clone(&stop);
         let thread_stats = Arc::clone(&stats);
+        let thread_gain = Arc::clone(&gain_bits);
         let join = std::thread::Builder::new()
             .name(format!("audio-{}", source.label()))
             .spawn(move || {
-                if let Err(e) = capture_loop(source, tx, thread_stop, thread_stats) {
+                if let Err(e) = capture_loop(
+                    source,
+                    opened_id.as_deref(),
+                    tx,
+                    thread_stop,
+                    thread_stats,
+                    thread_gain,
+                ) {
                     eprintln!("{} capture stopped: {e}", source.label());
                 }
             })
             .expect("failed to spawn audio thread");
 
         Ok((
-            AudioCapture { stop, join: Some(join), format, stats, source },
+            AudioCapture {
+                stop,
+                join: Some(join),
+                gain: gain_bits,
+                format,
+                stats,
+                source,
+                device,
+            },
             rx,
         ))
+    }
+
+    /// Change the gain of a running capture. 1.0 is unity.
+    pub fn set_gain(&self, gain: f32) {
+        self.gain.store(gain.clamp(0.0, 4.0).to_bits(), Ordering::Relaxed);
     }
 
     pub fn stop(&mut self) {
@@ -164,8 +211,17 @@ impl Drop for AudioCapture {
 fn endpoint(
     enumerator: &IMMDeviceEnumerator,
     source: AudioSource,
+    device_id: Option<&str>,
 ) -> Result<windows::Win32::Media::Audio::IMMDevice> {
     unsafe {
+        // A named endpoint, when it still exists. GetDevice fails for an id
+        // that has been unplugged, and falling through to the default is the
+        // right answer: the alternative is a recording with no sound at all.
+        if let Some(id) = device_id {
+            if let Ok(d) = enumerator.GetDevice(&windows::core::HSTRING::from(id)) {
+                return Ok(d);
+            }
+        }
         match source {
             AudioSource::Loopback => enumerator.GetDefaultAudioEndpoint(eRender, eConsole),
             AudioSource::Microphone => {
@@ -176,18 +232,22 @@ fn endpoint(
 }
 
 /// Read the mix format without starting capture.
-fn probe_format(source: AudioSource) -> Result<AudioFormat> {
+fn probe_format(
+    source: AudioSource,
+    device_id: Option<&str>,
+) -> Result<(AudioFormat, Option<AudioDevice>)> {
     // This runs on the caller's thread, which may or may not have COM up.
     // Initialising and uninitialising around the probe keeps it self-contained;
     // a nested init on an already-MTA thread is a no-op refcount bump.
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
-    let result = (|| -> Result<AudioFormat> {
+    let result = (|| -> Result<(AudioFormat, Option<AudioDevice>)> {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-            let device = endpoint(&enumerator, source)?;
+            let device = endpoint(&enumerator, source, device_id)?;
+            let info = describe(&device, source, false);
             let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
             let mix = client.GetMixFormat()?;
             let fmt = AudioFormat {
@@ -196,37 +256,42 @@ fn probe_format(source: AudioSource) -> Result<AudioFormat> {
                 device_channels: (*mix).nChannels,
             };
             CoTaskMemFree(Some(mix as *const _));
-            Ok(fmt)
+            Ok((fmt, info))
         }
     })();
     unsafe { CoUninitialize() };
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn capture_loop(
     source: AudioSource,
+    device_id: Option<&str>,
     tx: Sender<AudioChunk>,
     stop: Arc<AtomicBool>,
     stats: Arc<AudioStats>,
+    gain: Arc<AtomicU32>,
 ) -> Result<()> {
     unsafe {
         CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
     }
-    let result = capture_loop_inner(source, tx, stop, stats);
+    let result = capture_loop_inner(source, device_id, tx, stop, stats, gain);
     unsafe { CoUninitialize() };
     result
 }
 
 fn capture_loop_inner(
     source: AudioSource,
+    device_id: Option<&str>,
     tx: Sender<AudioChunk>,
     stop: Arc<AtomicBool>,
     stats: Arc<AudioStats>,
+    gain: Arc<AtomicU32>,
 ) -> Result<()> {
     unsafe {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        let device = endpoint(&enumerator, source)?;
+        let device = endpoint(&enumerator, source, device_id)?;
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
 
         let mix = client.GetMixFormat()?;
@@ -304,6 +369,10 @@ fn capture_loop_inner(
                     pcm.clear();
                     pcm.reserve(out_n);
 
+                    // Read once per packet, not per sample: a slider moving
+                    // mid-packet is inaudible, and this keeps the atomic out
+                    // of the inner loop.
+                    let g = f32::from_bits(gain.load(Ordering::Relaxed));
                     let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
                     if silent {
                         // Zeros, not a skip: dropping silent packets would
@@ -315,19 +384,27 @@ fn capture_loop_inner(
                         let src = std::slice::from_raw_parts(data as *const f32, src_n);
                         for f in 0..frames as usize {
                             let (l, r) = downmix_f32(src, f, channels as usize);
-                            pcm.push(to_i16(l));
-                            pcm.push(to_i16(r));
+                            // Gain before quantisation — scaling the float is
+                            // free here, while scaling i16 afterwards would
+                            // quantise twice.
+                            pcm.push(to_i16(l * g));
+                            pcm.push(to_i16(r * g));
                         }
                     } else if bits == 16 {
                         let src = std::slice::from_raw_parts(data as *const i16, src_n);
                         for f in 0..frames as usize {
                             let base = f * channels as usize;
-                            if channels >= 2 {
-                                pcm.push(src[base]);
-                                pcm.push(src[base + 1]);
+                            let (l, r) = if channels >= 2 {
+                                (src[base], src[base + 1])
                             } else {
-                                pcm.push(src[base]);
-                                pcm.push(src[base]);
+                                (src[base], src[base])
+                            };
+                            if g == 1.0 {
+                                pcm.push(l);
+                                pcm.push(r);
+                            } else {
+                                pcm.push(scale_i16(l, g));
+                                pcm.push(scale_i16(r, g));
                             }
                         }
                     } else {
@@ -390,6 +467,13 @@ fn to_i16(v: f32) -> i16 {
     (v.clamp(-1.0, 1.0) * 32767.0) as i16
 }
 
+/// Apply gain to an already-quantised sample, saturating rather than wrapping.
+/// Wrapping would turn a loud moment into a burst of noise, which is worse
+/// than the clipping it replaces.
+pub(crate) fn scale_i16(v: i16, g: f32) -> i16 {
+    (v as f32 * g).clamp(-32768.0, 32767.0) as i16
+}
+
 /// Fold one frame down to stereo.
 ///
 /// Standard ITU-style coefficients for the 5.1 case: centre and LFE go to both
@@ -449,5 +533,111 @@ unsafe fn mix_is_float(mix: *const WAVEFORMATEX) -> bool {
             }
             _ => false,
         }
+    }
+}
+
+/* ------------------------------------------------------------- devices */
+
+/// One selectable endpoint.
+///
+/// The id is Windows' own endpoint id string — stable across reboots and
+/// re-plugs, unlike the friendly name, which changes with the driver and is
+/// duplicated across identical headsets. Settings store the id; people read
+/// the name.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AudioDevice {
+    pub id: String,
+    pub name: String,
+    /// Which source this endpoint can feed: "desktop" for render endpoints
+    /// (read via loopback), "microphone" for capture endpoints.
+    pub kind: &'static str,
+    /// Whether Windows currently considers this the default for that role.
+    pub default: bool,
+}
+
+/// Active endpoints for both roles.
+///
+/// Only `DEVICE_STATE_ACTIVE`: unplugged and disabled endpoints are listed by
+/// Windows too, and offering one is offering a recording of silence.
+pub fn list_devices() -> Vec<AudioDevice> {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
+    let out = (|| -> Result<Vec<AudioDevice>> {
+        let mut out = Vec::new();
+        unsafe {
+            let enumerator: IMMDeviceEnumerator =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+            for (flow, source) in [
+                (eRender, AudioSource::Loopback),
+                (eCapture, AudioSource::Microphone),
+            ] {
+                let role = match source {
+                    AudioSource::Loopback => eConsole,
+                    AudioSource::Microphone => eCommunications,
+                };
+                let default_id = enumerator
+                    .GetDefaultAudioEndpoint(flow, role)
+                    .ok()
+                    .and_then(|d| device_id(&d));
+
+                let collection = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)?;
+                for i in 0..collection.GetCount()? {
+                    let Ok(dev) = collection.Item(i) else { continue };
+                    if let Some(mut info) = describe(&dev, source, false) {
+                        info.default = Some(&info.id) == default_id.as_ref();
+                        out.push(info);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    })();
+    unsafe { CoUninitialize() };
+    out.unwrap_or_default()
+}
+
+fn device_id(device: &windows::Win32::Media::Audio::IMMDevice) -> Option<String> {
+    unsafe {
+        let id = device.GetId().ok()?;
+        let s = id.to_string().ok();
+        CoTaskMemFree(Some(id.0 as *const _));
+        s
+    }
+}
+
+/// Read an endpoint's id and friendly name. Returns None if the id cannot be
+/// read, since an entry nothing can select is worse than no entry.
+fn describe(
+    device: &windows::Win32::Media::Audio::IMMDevice,
+    source: AudioSource,
+    default: bool,
+) -> Option<AudioDevice> {
+    let id = device_id(device)?;
+    let name = friendly_name(device).unwrap_or_else(|| "Unknown device".to_string());
+    Some(AudioDevice {
+        id,
+        name,
+        kind: source.label(),
+        default,
+    })
+}
+
+fn friendly_name(device: &windows::Win32::Media::Audio::IMMDevice) -> Option<String> {
+    use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+    use windows::Win32::System::Com::STGM_READ;
+    unsafe {
+        let store = device.OpenPropertyStore(STGM_READ).ok()?;
+        let mut prop = store.GetValue(&PKEY_Device_FriendlyName).ok()?;
+        // The union is only a string when the variant type says so; reading
+        // pwszVal off anything else is reading a pointer that is not one.
+        let inner = &prop.Anonymous.Anonymous;
+        let name = if inner.vt == VT_LPWSTR {
+            inner.Anonymous.pwszVal.to_string().ok()
+        } else {
+            None
+        };
+        let _ = PropVariantClear(&mut prop);
+        name
     }
 }

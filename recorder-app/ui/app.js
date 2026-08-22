@@ -17,7 +17,12 @@ async function loadConfig() {
   el("outdir").value = cfg.output_dir;
   el("capaudio").checked = cfg.capture_audio;
   el("capmic").checked = cfg.capture_mic;
+  el("mixaudio").checked = cfg.mix_audio;
+  setGainUI("Desktop", cfg.desktop_gain);
+  setGainUI("Mic", cfg.mic_gain);
   await refreshTargets();
+  await refreshDevices();
+  syncAudioEnabled();
   el("hotkeyhint").textContent = `Press ${cfg.save_hotkey} in game to save the last ${cfg.window_secs}s.`;
 }
 
@@ -179,6 +184,11 @@ el("save").addEventListener("click", async () => {
     output_dir: el("outdir").value,
     capture_audio: el("capaudio").checked,
     capture_mic: el("capmic").checked,
+    mix_audio: el("mixaudio").checked,
+    desktop_gain: pctToGain(el("gainDesktop").value),
+    mic_gain: pctToGain(el("gainMic").value),
+    desktop_device: el("devDesktop").value,
+    mic_device: el("devMic").value,
     target: JSON.parse(el("target").value),
   };
   try {
@@ -191,6 +201,92 @@ el("save").addEventListener("click", async () => {
     el("saved").textContent = "could not save: " + e;
   }
 });
+
+/* ----------------------------------------------------------------- audio */
+
+// Sliders are integer percent; the config is a linear multiplier. 100% is
+// unity, 200% is +6 dB — enough to rescue a quiet headset mic without being
+// enough to turn any source into noise.
+const pctToGain = (p) => Number(p) / 100;
+const gainToPct = (g) => Math.round((g == null ? 1 : g) * 100);
+
+function setGainUI(which, gain) {
+  const pct = gainToPct(gain);
+  el("gain" + which).value = pct;
+  el("gain" + which + "Val").textContent = pct + "%";
+}
+
+async function refreshDevices() {
+  let devices = [];
+  try {
+    devices = await invoke("list_audio_devices");
+  } catch {
+    devices = [];
+  }
+  fillDevices("devDesktop", devices.filter((d) => d.kind === "desktop"), cfg && cfg.desktop_device);
+  fillDevices("devMic", devices.filter((d) => d.kind === "microphone"), cfg && cfg.mic_device);
+}
+
+function fillDevices(id, list, chosen) {
+  const sel = el(id);
+  sel.innerHTML = "";
+  const add = (value, label) => {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = label;
+    sel.appendChild(o);
+  };
+  // Empty means "whatever Windows is using", which is what most people want
+  // and what keeps working when they change it in Windows.
+  const def = list.find((d) => d.default);
+  add("", def ? `Default — ${def.name}` : "Default");
+  for (const d of list) add(d.id, d.name);
+  // A saved device that is not plugged in right now stays selected and says
+  // so, rather than silently reverting to the default and recording the wrong
+  // thing the next time it is plugged back in.
+  if (chosen && !list.some((d) => d.id === chosen)) {
+    add(chosen, "(not connected) saved device");
+  }
+  sel.value = chosen || "";
+}
+
+// Nothing below the checkboxes means anything if the source is off.
+function syncAudioEnabled() {
+  const d = el("capaudio").checked;
+  const m = el("capmic").checked;
+  el("devDesktop").disabled = !d;
+  el("gainDesktop").disabled = !d;
+  el("devMic").disabled = !m;
+  el("gainMic").disabled = !m;
+  // Mixing is only meaningful with two things to mix.
+  const canMix = d && m;
+  el("mixaudio").disabled = !canMix;
+  el("mixaudio").parentElement.classList.toggle("dim", !canMix);
+}
+
+// Volume is applied live rather than on Save: the engine pushes gain at the
+// running captures without rebuilding, so dragging a slider costs nothing and
+// waiting for a Save click to hear the result would make it unusable.
+let gainTimer = null;
+function onGain(which, field) {
+  const input = el("gain" + which);
+  input.addEventListener("input", () => {
+    el("gain" + which + "Val").textContent = input.value + "%";
+    if (!cfg) return;
+    cfg[field] = pctToGain(input.value);
+    clearTimeout(gainTimer);
+    // Coalesce a drag into one write; the config file is on disk and the
+    // engine restarts nothing, but there is no reason to do it 40 times.
+    gainTimer = setTimeout(() => invoke("set_config", { newConfig: cfg }).catch(() => {}), 150);
+  });
+}
+onGain("Desktop", "desktop_gain");
+onGain("Mic", "mic_gain");
+
+for (const id of ["capaudio", "capmic"]) {
+  el(id).addEventListener("change", syncAudioEnabled);
+}
+el("refreshDevices").addEventListener("click", refreshDevices);
 
 /* --------------------------------------------------------------- gallery */
 

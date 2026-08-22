@@ -99,7 +99,32 @@
         <label class="check"><input id="capaudio" type="checkbox" /> Desktop (game + comms)</label>
         <label class="check"><input id="capmic" type="checkbox" /> Microphone</label>
       </div>
-      <p class="muted small note">Recorded as separate tracks, so a reviewer can isolate either.</p>
+
+      <div id="audioDetail">
+        <div class="arow">
+          <span class="alabel">Desktop</span>
+          <select id="devDesktop"></select>
+          <input id="gainDesktop" class="gain" type="range" min="0" max="200" step="5" />
+          <span id="gainDesktopVal" class="muted small gainval">100%</span>
+        </div>
+        <div class="arow">
+          <span class="alabel">Mic</span>
+          <select id="devMic"></select>
+          <input id="gainMic" class="gain" type="range" min="0" max="200" step="5" />
+          <span id="gainMicVal" class="muted small gainval">100%</span>
+        </div>
+        <div class="row">
+          <button id="refreshDevices" class="icon" title="Re-scan audio devices">↻</button>
+          <label class="check"><input id="mixaudio" type="checkbox" /> Combine into one track</label>
+        </div>
+      </div>
+
+      <p class="muted small note">
+        Separate tracks let a reviewer mute either side, and are the default.
+        <strong>YouTube keeps only the first track</strong>, so combine them if
+        you want your voice to survive an upload. Volume applies immediately;
+        changing a device restarts capture.
+      </p>
     </div>
     <div class="field">
       <label for="hotkey">Save-clip hotkey</label>

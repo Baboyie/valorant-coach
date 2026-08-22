@@ -61,6 +61,14 @@ fn set_config(
     Ok(())
 }
 
+/// Selectable audio endpoints, both roles. Enumerated on demand: a headset
+/// plugged in after launch should appear when the user looks, not after a
+/// restart.
+#[tauri::command]
+fn list_audio_devices() -> Vec<recorder_core::audio::AudioDevice> {
+    recorder_core::audio::list_devices()
+}
+
 /// The gallery's rows: every clip and recording in the output directory,
 /// sidecar metadata attached where a sidecar exists.
 #[tauri::command]
@@ -237,6 +245,7 @@ pub fn run() {
             reveal_in_explorer,
             list_targets,
             list_media,
+            list_audio_devices,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

@@ -99,6 +99,26 @@ pub struct Config {
     /// isolate or mute the player's own voice. Off by default: many machines
     /// have no usable microphone, and a silent extra track is worse than none.
     pub capture_mic: bool,
+    /// Sum desktop and microphone into a single track instead of keeping them
+    /// separate.
+    ///
+    /// Off by default, because separate tracks are better for review — a
+    /// reviewer can mute either side. Worth turning on for one reason: YouTube
+    /// keeps only the *first* audio track, so an uploaded POV otherwise loses
+    /// the player's voice entirely. Ignored unless both sources are on.
+    pub mix_audio: bool,
+    /// Linear gain for desktop audio. 1.0 is unity; applied at capture, before
+    /// quantisation.
+    pub desktop_gain: f32,
+    /// Linear gain for the microphone.
+    pub mic_gain: f32,
+    /// Endpoint id to record desktop audio from. Empty means the Windows
+    /// default. Stored as the endpoint id rather than the friendly name, which
+    /// changes with the driver and repeats across identical headsets. An id
+    /// that no longer resolves falls back to the default.
+    pub desktop_device: String,
+    /// Endpoint id for the microphone. Empty means the Windows default.
+    pub mic_device: String,
 
     /// Who this machine's POV belongs to, for multi-POV review. Free text —
     /// a Riot `name#tag` is the obvious choice, but a team can use whatever
@@ -128,9 +148,39 @@ impl Default for Config {
             target: Target::Valorant,
             capture_audio: true,
             capture_mic: false,
+            mix_audio: false,
+            desktop_gain: 1.0,
+            mic_gain: 1.0,
+            desktop_device: String::new(),
+            mic_device: String::new(),
             player: String::new(),
         }
     }
+}
+
+impl Config {
+    /// Gains clamped to something a slider can produce and an encoder can
+    /// survive. A hand-edited config with `"mic_gain": 1e30` should make
+    /// the microphone loud, not make every sample saturate.
+    pub fn desktop_gain_clamped(&self) -> f32 {
+        clamp_gain(self.desktop_gain)
+    }
+    pub fn mic_gain_clamped(&self) -> f32 {
+        clamp_gain(self.mic_gain)
+    }
+    /// Whether the two sources should be summed. Mixing one source with
+    /// nothing is just that source, with a resampler in the way.
+    pub fn mixing(&self) -> bool {
+        self.mix_audio && self.capture_audio && self.capture_mic
+    }
+    pub fn device_for(&self, mic: bool) -> Option<&str> {
+        let s = if mic { &self.mic_device } else { &self.desktop_device };
+        if s.is_empty() { None } else { Some(s.as_str()) }
+    }
+}
+
+fn clamp_gain(g: f32) -> f32 {
+    if g.is_finite() { g.clamp(0.0, 4.0) } else { 1.0 }
 }
 
 fn default_output_dir() -> PathBuf {

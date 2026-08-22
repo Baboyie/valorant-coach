@@ -136,12 +136,33 @@ impl Engine {
 /// Bundled rather than scattered so that "recording without audio" stays a
 /// single `None` instead of three fields that could disagree.
 struct AudioSide {
-    cap: recorder_core::audio::AudioCapture,
+    /// The capture threads feeding this track. One for a plain source, two
+    /// when the mixer is summing desktop and microphone into a single track.
+    caps: Vec<recorder_core::audio::AudioCapture>,
+    /// Present only when this track is a mix; owns the mixing thread.
+    mixer: Option<recorder_core::mix::AudioMixer>,
     rx: Receiver<recorder_core::audio::AudioChunk>,
+    /// The format actually being delivered — the mixer's master rate when
+    /// mixing, the capture's otherwise.
+    format: recorder_core::audio::AudioFormat,
     /// Only the replay path has its own encoder; on the file path audio rides
     /// the video writer as an extra stream.
     enc: Option<encoder::AudioEncoder>,
     track: replay::AudioTrack,
+}
+
+impl AudioSide {
+    fn stop_capture(&mut self) {
+        // Captures first, then the mixer: the mixer drains what is already in
+        // flight and exits when its inputs close, so stopping it first would
+        // strand the last packets.
+        for c in self.caps.iter_mut() {
+            c.stop();
+        }
+        if let Some(m) = self.mixer.as_mut() {
+            m.stop();
+        }
+    }
 }
 
 /// Start the audio sources the config asks for, as separate tracks (§23).
@@ -153,35 +174,171 @@ fn start_audio_sources(
     ring: Option<&Arc<replay::ReplayRing>>,
 ) -> Vec<AudioSide> {
     use recorder_core::audio::{AudioCapture, AudioSource};
+    use recorder_core::mix::AudioMixer;
 
-    let mut wanted = Vec::new();
+    // Open each capture the config asks for. A failure here is never fatal:
+    // a machine with no microphone still records desktop audio.
+    let mut opened = Vec::new();
     if config.capture_audio {
-        wanted.push((AudioSource::Loopback, replay::AudioTrack::Desktop));
-    }
-    if config.capture_mic {
-        wanted.push((AudioSource::Microphone, replay::AudioTrack::Mic));
-    }
-
-    let mut out = Vec::new();
-    for (src, track) in wanted {
-        match AudioCapture::start(src) {
-            Ok((cap, rx)) => {
-                let enc = match ring {
-                    Some(r) => match encoder::AudioEncoder::to_replay(track, &cap.format, Arc::clone(r)) {
-                        Ok(ae) => Some(ae),
-                        Err(e) => {
-                            eprintln!("{} encoder unavailable: {e}", src.label());
-                            continue;
-                        }
-                    },
-                    None => None,
-                };
-                out.push(AudioSide { cap, rx, enc, track });
-            }
-            Err(e) => eprintln!("{} unavailable, continuing without it: {e}", src.label()),
+        match AudioCapture::start_on(
+            AudioSource::Loopback,
+            config.device_for(false),
+            config.desktop_gain_clamped(),
+        ) {
+            Ok(pair) => opened.push((AudioSource::Loopback, pair)),
+            Err(e) => eprintln!("desktop audio unavailable, continuing without it: {e}"),
         }
     }
-    out
+    if config.capture_mic {
+        match AudioCapture::start_on(
+            AudioSource::Microphone,
+            config.device_for(true),
+            config.mic_gain_clamped(),
+        ) {
+            Ok(pair) => opened.push((AudioSource::Microphone, pair)),
+            Err(e) => eprintln!("microphone unavailable, continuing without it: {e}"),
+        }
+    }
+
+    // Mixing needs both. If one failed to open, fall through to whatever did —
+    // a "mixed" track of one source is that source with a resampler in the way.
+    let mix = config.mixing() && opened.len() == 2;
+    let mut sides: Vec<AudioSide> = Vec::new();
+
+    if mix {
+        let mut it = opened.into_iter();
+        let (_, (desktop_cap, desktop_rx)) = it.next().expect("two opened");
+        let (_, (mic_cap, mic_rx)) = it.next().expect("two opened");
+        // Desktop is the master clock: it is the stream that must not be
+        // resampled, since it carries the game.
+        //
+        // The microphone's gain is applied in the mixer rather than at its
+        // capture, because the mixer resamples it anyway — one scaling instead
+        // of two, and the slider still lands on the next packet.
+        mic_cap.set_gain(1.0);
+        let (mixer, rx) = AudioMixer::start(
+            (desktop_rx, desktop_cap.format),
+            (mic_rx, mic_cap.format),
+            config.mic_gain_clamped(),
+        );
+        let format = mixer.format;
+        sides.push(AudioSide {
+            caps: vec![desktop_cap, mic_cap],
+            mixer: Some(mixer),
+            rx,
+            format,
+            enc: None,
+            track: replay::AudioTrack::Mixed,
+        });
+    } else {
+        for (src, (cap, rx)) in opened {
+            let track = match src {
+                AudioSource::Loopback => replay::AudioTrack::Desktop,
+                AudioSource::Microphone => replay::AudioTrack::Mic,
+            };
+            let format = cap.format;
+            sides.push(AudioSide {
+                caps: vec![cap],
+                mixer: None,
+                rx,
+                format,
+                enc: None,
+                track,
+            });
+        }
+    }
+
+    // The replay path needs one encoder per track, writing into the ring. The
+    // file path has none: audio rides the video writer as extra streams.
+    if let Some(r) = ring {
+        sides.retain_mut(|side| {
+            match encoder::AudioEncoder::to_replay(side.track, &side.format, Arc::clone(r)) {
+                Ok(ae) => {
+                    side.enc = Some(ae);
+                    true
+                }
+                Err(e) => {
+                    eprintln!("{} encoder unavailable: {e}", side.track.label());
+                    side.stop_capture();
+                    false
+                }
+            }
+        });
+    }
+    sides
+}
+
+/// Push live gain and device changes at running captures.
+///
+/// Gain is the reason this exists: restarting the session to change a slider
+/// would drop the replay ring, so the user would lose their buffered footage
+/// for turning the microphone down. Device changes cannot be applied this way
+/// — a different endpoint is a different stream — so they still restart, which
+/// is what `needs_audio_restart` decides.
+fn apply_audio_settings(audio: &[AudioSide], config: &Config) {
+    for side in audio {
+        match side.track {
+            replay::AudioTrack::Mixed => {
+                // caps[0] is desktop, caps[1] the microphone; the mic's gain
+                // lives in the mixer.
+                if let Some(c) = side.caps.first() {
+                    c.set_gain(config.desktop_gain_clamped());
+                }
+                if let Some(m) = &side.mixer {
+                    m.set_other_gain(config.mic_gain_clamped());
+                }
+            }
+            replay::AudioTrack::Desktop => {
+                if let Some(c) = side.caps.first() {
+                    c.set_gain(config.desktop_gain_clamped());
+                }
+            }
+            replay::AudioTrack::Mic => {
+                if let Some(c) = side.caps.first() {
+                    c.set_gain(config.mic_gain_clamped());
+                }
+            }
+        }
+    }
+}
+
+/// Whether a settings change requires rebuilding the capture session.
+///
+/// Listed as what *does* force a rebuild rather than what does not, so a field
+/// added later defaults to the safe answer only if someone remembers to add it
+/// here — hence the exhaustive destructure below, which makes the compiler
+/// raise the question instead.
+fn needs_session_restart(old: &Config, new: &Config) -> bool {
+    // Destructured so that adding a field to Config fails to compile until
+    // someone decides which side of this line it falls on.
+    let Config {
+        window_secs,
+        fps,
+        bitrate_mbps,
+        output_dir,
+        save_hotkey: _,   // needs an app restart regardless
+        auto_buffer: _,   // read on the next detection tick
+        target,
+        capture_audio,
+        capture_mic,
+        mix_audio: _,     // covered by mixing() below
+        desktop_gain: _,  // pushed live
+        mic_gain: _,      // pushed live
+        desktop_device,
+        mic_device,
+        player: _,        // only ever read when writing a sidecar
+    } = new;
+
+    old.window_secs != *window_secs
+        || old.fps != *fps
+        || old.bitrate_mbps != *bitrate_mbps
+        || old.output_dir != *output_dir
+        || old.target != *target
+        || old.capture_audio != *capture_audio
+        || old.capture_mic != *capture_mic
+        || old.mixing() != new.mixing()
+        || old.desktop_device != *desktop_device
+        || old.mic_device != *mic_device
 }
 
 enum Session {
@@ -505,6 +662,20 @@ fn handle_cmd(
         }
 
         Cmd::Reconfigure(new) => {
+            // A volume slider must not cost the user their buffered footage.
+            // Tearing down discards the replay ring, so settings that a live
+            // session can absorb — the gains — are pushed at it instead, and
+            // only structural changes rebuild. Compared before the swap, while
+            // the old config is still here to compare against.
+            let restart = needs_session_restart(config, &new);
+            if !restart {
+                if let Session::Buffering { audio, .. } | Session::Recording { audio, .. } = session
+                {
+                    apply_audio_settings(audio, &new);
+                }
+                *config = *new;
+                return;
+            }
             *config = *new;
             // Rebuild so window length, fps and bitrate take effect. Detection
             // restarts buffering on the next tick. The lock is cleared so a
@@ -628,7 +799,7 @@ fn start_recording(source: capture::Source, config: &Config) -> windows::core::R
     // No ring on this path: audio rides the video writer as extra streams.
     let audio = start_audio_sources(config, None);
     let fmts: Vec<recorder_core::audio::AudioFormat> =
-        audio.iter().map(|a| a.cap.format).collect();
+        audio.iter().map(|a| a.format).collect();
     let enc = encoder::Encoder::to_file(&dev, &path.to_string_lossy(), &cfg, &fmts)?;
     cap.start()?;
     Ok(Session::Recording {
@@ -764,7 +935,7 @@ fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>, config: &Config)
             drain(&frames, &mut enc);
             let _ = enc.finish();
             for mut a in audio {
-                a.cap.stop();
+                a.stop_capture();
                 if let Some(ae) = a.enc.take() {
                     let _ = ae.finish();
                 }
@@ -776,7 +947,7 @@ fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>, config: &Config)
             // Stop audio before the final drain, or the loop chases a stream
             // that is still being fed and never ends.
             for a in audio.iter_mut() {
-                a.cap.stop();
+                a.stop_capture();
             }
             for (i, a) in audio.iter().enumerate() {
                 while let Ok(chunk) = a.rx.try_recv() {

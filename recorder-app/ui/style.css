@@ -149,3 +149,14 @@ ul.media { list-style: none; margin: 0; padding: 0; max-height: 264px; overflow-
 .player-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
 .player-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player video { width: 100%; flex: 1; min-height: 0; background: #000; border-radius: 8px; outline: none; }
+
+/* --------------------------------------------------------------- audio */
+
+#audioDetail { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.arow { display: flex; align-items: center; gap: 8px; }
+.alabel { flex: none; width: 52px; font-size: 12px; color: var(--muted); }
+.arow select { flex: 1; min-width: 0; }
+input.gain { flex: none; width: 96px; padding: 0; accent-color: var(--accent); background: none; border: none; }
+.gainval { flex: none; width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
+.dim { opacity: 0.45; }
+select:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
