@@ -658,24 +658,25 @@ impl MonitorInfo {
 
 /// Top-level windows a person would recognise from alt-tab.
 ///
-/// The filters are the alt-tab filters: visible, titled, not a tool window, not
-/// minimised (WGC composites nothing for an iconic window), not cloaked (UWP
-/// apps keep "visible" windows that are not actually on screen, and they show
-/// up as ghost entries in any naive list), and not ours.
+/// The filters are the alt-tab filters: visible, titled, not a tool window,
+/// not cloaked (UWP apps keep "visible" windows that are not actually on
+/// screen, and they show up as ghost entries in any naive list), and not ours.
+/// Minimised windows are listed — alt-tab lists them — and the engine waits
+/// for a restore before it builds a session over one.
 pub fn list_windows() -> Vec<WindowInfo> {
     use windows::core::BOOL;
     use windows::Win32::Foundation::LPARAM;
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::System::Threading::GetCurrentProcessId;
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic,
+        EnumWindows, GetClassNameW, GetWindowLongPtrW, GetWindowThreadProcessId,
         IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
     };
 
     unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let out = unsafe { &mut *(lparam.0 as *mut Vec<WindowInfo>) };
         let keep = (|| {
-            if !unsafe { IsWindowVisible(hwnd) }.as_bool() || unsafe { IsIconic(hwnd) }.as_bool() {
+            if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
                 return None;
             }
             let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;

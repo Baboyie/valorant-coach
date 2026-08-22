@@ -58,6 +58,9 @@ function fmtState(s) {
   // clip which window they actually recorded.
   const auto = !cfg || !cfg.target || cfg.target.kind === "valorant";
   const named = (verb) => (!auto && s.target_title ? `${verb}: ${s.target_title}` : verb);
+  // A queued action outranks the idle text: "window is minimised — recording
+  // starts when it comes back" is the difference between waiting and broken.
+  if (s.pending) return s.pending;
   if (s.state === "recording") return named("recording");
   if (s.state === "buffering") return named("buffering");
   if (s.game_running) return named("starting…");

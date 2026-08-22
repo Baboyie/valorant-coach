@@ -67,10 +67,14 @@ pub struct Status {
     pub last_error: Option<String>,
     pub recording_path: Option<String>,
     pub recording_secs: f64,
-    /// Title of the window being (or about to be) captured. What lets
-    /// foreground mode say "buffering: Notepad" instead of leaving the user to
-    /// find out from the clip.
+    /// Title of the window being (or about to be) captured, so the UI can
+    /// say "buffering: Notepad" instead of leaving the user to find out from
+    /// the clip.
     pub target_title: Option<String>,
+    /// A queued action waiting on the target — recording queued while the game
+    /// is minimised, say. Shown as status, never as an error: nothing is
+    /// wrong, something is waiting.
+    pub pending: Option<String>,
 }
 
 impl Default for Status {
@@ -91,6 +95,7 @@ impl Default for Status {
             recording_path: None,
             recording_secs: 0.0,
             target_title: None,
+            pending: None,
         }
     }
 }
@@ -239,6 +244,10 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
     // What the live session captures. Lives on this thread only; handles never
     // cross to the UI, which sees a label.
     let mut locked: Option<capture::Source> = None;
+    // A "start recording" the user asked for while the target could not be
+    // captured — an exclusive-fullscreen game minimises the moment they click,
+    // so honouring the click means remembering it.
+    let mut pending_record = false;
 
     loop {
         // ---- commands -------------------------------------------------
@@ -247,7 +256,7 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
                 teardown(&mut session, &status, &config);
                 break;
             }
-            Ok(cmd) => handle_cmd(cmd, &mut session, &mut config, &status, &mut locked),
+            Ok(cmd) => handle_cmd(cmd, &mut session, &mut config, &status, &mut locked, &mut pending_record),
             Err(TryRecvError::Empty) => {}
         }
 
@@ -260,30 +269,65 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
                 locked = None;
             }
             match locked {
-                // Idle: resolve the configured target and, if wanted, start.
+                // Idle: resolve the configured target and act on it.
                 None => {
                     let found = find_target(&config.target);
+                    let iconic = found.map(source_iconic).unwrap_or(false);
                     {
-                        let mut s = status.lock().unwrap();
-                        s.game_running = found.is_some();
+                        let mut st = status.lock().unwrap();
+                        st.game_running = found.is_some();
                         // What *would* be recorded, so the UI can name it
                         // before anything starts.
-                        s.target_title = found.and_then(|f| f.label());
-                    }
-                    if let (Some(src), true) = (found, config.auto_buffer) {
-                        match start_buffering(src, &config) {
-                            Ok((new, adapter3)) => {
-                                session = new;
-                                adapter = adapter3;
-                                locked = Some(src);
-                                clear_error(&status);
+                        st.target_title = found.and_then(|f| f.label());
+                        st.pending = match (found.is_some(), iconic, pending_record) {
+                            // A minimised window reports the 160x28 iconic
+                            // placeholder, which the capture core rightly
+                            // refuses as too small. Nothing is wrong; something
+                            // is waiting. Say that, instead of retrying into
+                            // the same error every two seconds.
+                            (true, true, true) => {
+                                Some("window is minimised — recording starts when it comes back".into())
                             }
-                            Err(e) => {
-                                // Most likely the window is minimised — the
-                                // capture core refuses degenerate sizes (ADR
-                                // §8). Retry on the next tick rather than
-                                // giving up for good.
-                                set_error(&status, &format!("could not start buffering: {e}"));
+                            (true, true, false) => {
+                                Some("window is minimised — capture resumes when it comes back".into())
+                            }
+                            (false, _, true) => {
+                                Some("recording queued — waiting for the target to appear".into())
+                            }
+                            _ => None,
+                        };
+                    }
+                    if let (Some(src), false) = (found, iconic) {
+                        if pending_record {
+                            match start_recording(src, &config) {
+                                Ok(new) => {
+                                    session = new;
+                                    locked = Some(src);
+                                    pending_record = false;
+                                    let mut st = status.lock().unwrap();
+                                    st.pending = None;
+                                    st.last_error = None;
+                                }
+                                Err(e) => {
+                                    // Transient — a display-mode switch mid-
+                                    // restore reports odd sizes for a moment.
+                                    // The queue survives the retry.
+                                    set_error(&status, &format!("could not start recording: {e}"));
+                                }
+                            }
+                        } else if config.auto_buffer {
+                            match start_buffering(src, &config) {
+                                Ok((new, adapter3)) => {
+                                    session = new;
+                                    adapter = adapter3;
+                                    locked = Some(src);
+                                    clear_error(&status);
+                                }
+                                Err(e) => {
+                                    // Retry on the next tick rather than
+                                    // giving up for good.
+                                    set_error(&status, &format!("could not start buffering: {e}"));
+                                }
                             }
                         }
                     }
@@ -298,9 +342,9 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
                     if !src.alive() {
                         teardown(&mut session, &status, &config);
                         locked = None;
-                        let mut s = status.lock().unwrap();
-                        s.game_running = false;
-                        s.target_title = None;
+                        let mut st = status.lock().unwrap();
+                        st.game_running = false;
+                        st.target_title = None;
                     }
                 }
             }
@@ -337,6 +381,7 @@ fn handle_cmd(
     config: &mut Config,
     status: &Arc<Mutex<Status>>,
     locked: &mut Option<capture::Source>,
+    pending_record: &mut bool,
 ) {
     match cmd {
         Cmd::SaveClip => match session {
@@ -412,6 +457,23 @@ fn handle_cmd(
                 );
                 return;
             };
+            if source_iconic(src) {
+                // The catch-22 this queue exists for: an exclusive-fullscreen
+                // game minimises the moment the user tabs out, and tabbing out
+                // is how this button gets clicked. Failing here with "too
+                // small to record" made recording unstartable at any
+                // resolution where the game goes truly fullscreen. Queue the
+                // intent, hand focus straight back, and let the tick start the
+                // recording once the window has a real size again.
+                *pending_record = true;
+                {
+                    let mut st = status.lock().unwrap();
+                    st.pending = Some("bringing the window back — recording will start".into());
+                    st.last_error = None;
+                }
+                restore_window(src);
+                return;
+            }
             // Drop the buffering session first: one capture session per target,
             // and v1 does not run two encoders at once.
             teardown(session, status, config);
@@ -419,8 +481,11 @@ fn handle_cmd(
                 Ok(new) => {
                     *session = new;
                     *locked = Some(src);
-                    status.lock().unwrap().target_title = src.label();
-                    clear_error(status);
+                    *pending_record = false;
+                    let mut st = status.lock().unwrap();
+                    st.target_title = src.label();
+                    st.pending = None;
+                    st.last_error = None;
                 }
                 Err(e) => {
                     *locked = None;
@@ -430,6 +495,8 @@ fn handle_cmd(
         }
 
         Cmd::StopRecording => {
+            *pending_record = false;
+            status.lock().unwrap().pending = None;
             if let Session::Recording { .. } = session {
                 teardown(session, status, config);
                 *locked = None;
@@ -444,6 +511,8 @@ fn handle_cmd(
             // resuming on whatever the previous mode had chosen.
             teardown(session, status, config);
             *locked = None;
+            *pending_record = false;
+            status.lock().unwrap().pending = None;
         }
 
         Cmd::Shutdown => unreachable!("handled by the caller"),
@@ -452,6 +521,29 @@ fn handle_cmd(
 
 /// The window to record.
 ///
+/// Whether a window source is currently minimised. Monitors never are.
+fn source_iconic(src: capture::Source) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::IsIconic;
+    match src {
+        capture::Source::Window(h) => unsafe { IsIconic(h) }.as_bool(),
+        capture::Source::Monitor(_) => false,
+    }
+}
+
+/// Restore a minimised window and hand it the foreground. DEBRIEF is the
+/// foreground window at the moment this runs — the user just clicked it —
+/// which is exactly the condition under which Windows allows an app to give
+/// focus away.
+fn restore_window(src: capture::Source) {
+    use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE};
+    if let capture::Source::Window(h) = src {
+        unsafe {
+            let _ = ShowWindow(h, SW_RESTORE);
+            let _ = SetForegroundWindow(h);
+        }
+    }
+}
+
 /// Resolve the configured target to something capturable, right now.
 ///
 /// `DEBRIEF_TEST_FOREGROUND=1` substitutes the foreground window regardless
