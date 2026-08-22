@@ -154,12 +154,13 @@ window when its title changes, and the session ends only when the window
 closes. `capture::Source` confines the choice to construction — the pipeline
 never learns which it got. The §29 numbers stay a Valorant-only claim.
 
-**Gallery.** Already listed under Known gaps in `recorder-app/README.md`. Needs
-a file list built from the `.json` sidecars beside each MP4 (they already carry
-duration, resolution, fps, track list and kind), thumbnails, and playback in the
-webview via Tauri's asset protocol. Splitting clips and recordings into
-subfolders is easy but relocates existing files, so it wants a one-time move
-rather than silently leaving old ones behind.
+**~~Gallery~~. Done 2026-08-22** — clips and recordings in separate tabs and
+separate folders (one-time startup migration; never overwrite, never delete),
+rows from the sidecars, playback in-app over a custom `media:` scheme with real
+range semantics (8 MB slices, path re-validated per request — chosen over the
+asset protocol, whose scope would have to span wherever the user points
+`output_dir`). No thumbnails yet: generating one means decoding a frame per
+file, which is a Media Foundation source-reader job for later.
 
 **Notifications — buildable, but read this first.** `tauri-plugin-notification`
 makes start/stop/save toasts trivial. The catch is that Windows turns on Do Not
