@@ -520,3 +520,41 @@ pub fn find_valorant() -> Option<HWND> {
     let _ = unsafe { EnumWindows(Some(enum_cb), LPARAM(&mut search as *mut _ as isize)) };
     search.hwnd
 }
+
+/// The foreground window, unless it belongs to this process.
+///
+/// Exists for foreground-target mode, where "record what I was using" has a
+/// hole in it: at the moment anyone clicks a button in this app, the literal
+/// foreground window is this app. Filtering by owning process rather than by
+/// window handle covers every window we own, present and future, instead of a
+/// list that goes stale.
+pub fn find_foreground_other() -> Option<HWND> {
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId, IsWindowVisible,
+    };
+
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() || !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+        return None;
+    }
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    if pid == unsafe { GetCurrentProcessId() } {
+        return None;
+    }
+    Some(hwnd)
+}
+
+/// A window title for status display — "buffering: Notepad" — so foreground
+/// mode can say what it locked onto rather than leaving the user to find out
+/// from the clip.
+pub fn window_title(hwnd: HWND) -> Option<String> {
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
+    if n <= 0 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buf[..n as usize]).trim_end().to_string())
+}

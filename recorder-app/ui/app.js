@@ -13,13 +13,24 @@ async function loadConfig() {
   el("outdir").value = cfg.output_dir;
   el("capaudio").checked = cfg.capture_audio;
   el("capmic").checked = cfg.capture_mic;
+  el("target").value = cfg.target || "valorant";
   el("hotkeyhint").textContent = `Press ${cfg.save_hotkey} in game to save the last ${cfg.window_secs}s.`;
 }
 
 function fmtState(s) {
-  if (s.state === "recording") return "recording to file";
-  if (s.state === "buffering") return "buffering";
-  return s.game_running ? "starting…" : "waiting for Valorant";
+  // In foreground mode the target is whatever window was chosen, so name it —
+  // “buffering: Notepad” — rather than leaving the user to find out from the
+  // clip which window they actually recorded.
+  const named = (verb) =>
+    cfg && cfg.target === "foreground" && s.target_title
+      ? `${verb}: ${s.target_title}`
+      : verb;
+  if (s.state === "recording") return named("recording");
+  if (s.state === "buffering") return named("buffering");
+  if (s.game_running) return named("starting…");
+  return cfg && cfg.target === "foreground"
+    ? "click into the window you want to record"
+    : "waiting for Valorant";
 }
 
 async function tick() {
@@ -107,6 +118,7 @@ el("save").addEventListener("click", async () => {
     output_dir: el("outdir").value,
     capture_audio: el("capaudio").checked,
     capture_mic: el("capmic").checked,
+    target: el("target").value,
   };
   try {
     await invoke("set_config", { newConfig: next });

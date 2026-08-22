@@ -256,11 +256,26 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window hides it. A recorder that stops buffering
-            // because someone tidied their taskbar is not a recorder.
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            // Closing or minimizing hides the window into the tray. A recorder
+            // that stops buffering because someone tidied their taskbar is not
+            // a recorder — and once closing hides, a minimized-but-present
+            // taskbar entry is just a second, inconsistent way to do the same
+            // thing. The tray icon is the way back in either case.
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                WindowEvent::Resized(_) => {
+                    // Minimize arrives as a Resized event; ask the window.
+                    // Hide without un-minimizing first — that would replay the
+                    // restore animation on its way out. show_main_window()
+                    // already un-minimizes on the way back in.
+                    if window.is_minimized().unwrap_or(false) {
+                        let _ = window.hide();
+                    }
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())

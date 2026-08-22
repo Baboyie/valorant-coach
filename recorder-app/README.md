@@ -154,6 +154,12 @@ way back, since the previous artifact in `deps/` is replaced too. Copy a known
 good `recorder-app.exe` aside before rebuilding — `D:\dev\vc-known-good` on this
 rig — so a bad verdict costs a retry rather than the evening.
 
+**The working workaround: relink and retry.** Verdicts attach to the file, so a
+fresh link is a fresh verdict — `touch src/main.rs && cargo build --release`
+and launch again. Twice now a blocked binary was followed by an allowed one
+with SAC unchanged in between. Combined with keeping a known-good copy in
+`D:devc-known-good`, a block costs minutes, not the evening.
+
 **Do not turn SAC off over a single block.** Turning it off is irreversible —
 re-enabling requires reinstalling Windows — and the evidence above says the next
 build may well be fine. It is the nuclear option, not the fix.

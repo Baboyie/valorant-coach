@@ -139,3 +139,41 @@ Also outstanding but lower value for now: Competitive/Quality/Custom presets
   capture endpoint mixed as its own track would let a reviewer mute one side.
 - **Replay ring is `Mutex`-guarded** where ADR §3 specifies lock-free, and the
   save is synchronous. Fine at 60 locks/s; revisit if a hotkey save ever stutters.
+
+## 5. Requested features (2026-08-22)
+
+In the order they are cheap, not the order they were asked.
+
+**Tray on minimize.** `lib.rs` handles `CloseRequested` and hides the window;
+minimize is simply not handled. A few lines. The only judgement call is whether
+minimize should hide entirely (no taskbar entry) or stay minimized as now.
+
+**Not Valorant-only.** `engine.rs` already has the escape hatch:
+`DEBRIEF_TEST_FOREGROUND=1` substitutes the foreground window for the game, and
+the capture layer takes any `HWND`. This is promoting a test affordance into a
+real feature — a target picker (game / foreground window / specific window /
+monitor) — not new capture work. Note the §29 performance numbers stay a
+Valorant-at-240fps claim regardless of what else it can record.
+
+**Gallery.** Already listed under Known gaps in `recorder-app/README.md`. Needs
+a file list built from the `.json` sidecars beside each MP4 (they already carry
+duration, resolution, fps, track list and kind), thumbnails, and playback in the
+webview via Tauri's asset protocol. Splitting clips and recordings into
+subfolders is easy but relocates existing files, so it wants a one-time move
+rather than silently leaving old ones behind.
+
+**Notifications — buildable, but read this first.** `tauri-plugin-notification`
+makes start/stop/save toasts trivial. The catch is that Windows turns on Do Not
+Disturb automatically while a game is fullscreen, so the toast will *not* appear
+during play — which is exactly when "clip saved" is worth knowing. Options, none
+free:
+
+- Toasts anyway: useful when tabbed out, silent when it matters most.
+- An audible cue. Audible in game, but loopback captures it, so it lands in the
+  *next* clip's audio. A short quiet blip is probably an acceptable trade.
+- An overlay would work and is the one thing this project will not do — hooking
+  the game is what risks a Vanguard ban (ADR §1).
+
+**Adjustable audio tracks.** Needs scoping — see the open question below. Any
+per-sample gain is cheap to apply at capture, but §23 says keep audio processing
+out of the way, so resampling or mixing deserves more care than volume does.

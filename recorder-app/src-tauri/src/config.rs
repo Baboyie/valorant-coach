@@ -8,6 +8,24 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Target {
+    /// Record Valorant, found by window class. The default, and the only mode
+    /// the §29 performance claims speak for.
+    Valorant,
+    /// Record the last window used outside DEBRIEF. The window is chosen when
+    /// buffering starts and stays chosen — alt-tabbing mid-session does not
+    /// switch what is being recorded, which is what makes the mode predictable.
+    Foreground,
+}
+
+impl Default for Target {
+    fn default() -> Self {
+        Target::Valorant
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -23,8 +41,14 @@ pub struct Config {
     pub output_dir: PathBuf,
     /// Global hotkey for saving a clip, in Tauri accelerator syntax.
     pub save_hotkey: String,
-    /// Whether to start buffering automatically when Valorant appears.
+    /// Whether to start buffering automatically when the target appears.
     pub auto_buffer: bool,
+    /// What to record. `Valorant` is the product; `Foreground` exists because
+    /// teammates asked to record other things, and the capture layer never
+    /// cared — it takes any HWND. In foreground mode the engine locks onto the
+    /// last window used *outside* DEBRIEF: at the moment anyone clicks a
+    /// button in this app, the literal foreground window is this app.
+    pub target: Target,
     /// Record desktop audio (WASAPI loopback) alongside video.
     pub capture_audio: bool,
     /// Record the microphone as a **separate track** (§23), so a reviewer can
@@ -57,6 +81,7 @@ impl Default for Config {
             // experiences as the game breaking.
             save_hotkey: "Alt+F10".into(),
             auto_buffer: true,
+            target: Target::Valorant,
             capture_audio: true,
             capture_mic: false,
             player: String::new(),

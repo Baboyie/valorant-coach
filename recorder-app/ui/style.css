@@ -76,6 +76,7 @@ button.rec { background: var(--rec); border-color: var(--rec); color: #fff; }
 .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .row { display: flex; align-items: center; gap: 8px; }
 
+select,
 input {
   flex: 1;
   min-width: 0;
@@ -87,7 +88,7 @@ input {
   font: inherit;
   user-select: text;
 }
-input:focus { outline: none; border-color: var(--accent); }
+input:focus, select:focus { outline: none; border-color: var(--accent); }
 
 .muted { color: var(--muted); }
 .small { font-size: 12px; }

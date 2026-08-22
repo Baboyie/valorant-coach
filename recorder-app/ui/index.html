@@ -70,6 +70,20 @@
       <div class="row"><input id="bitrate" type="number" min="0" max="80" step="1" /><span class="muted">Mbps — 0 = auto</span></div>
     </div>
     <div class="field">
+      <label for="target">Record</label>
+      <div class="row">
+        <select id="target">
+          <option value="valorant">Valorant</option>
+          <option value="foreground">Last active window</option>
+        </select>
+      </div>
+      <p class="muted small note">
+        “Last active window” records whatever you were using before switching
+        to DEBRIEF, and stays on it — alt-tabbing mid-recording does not change
+        the target. Performance numbers are only measured for Valorant.
+      </p>
+    </div>
+    <div class="field">
       <label>Audio tracks</label>
       <div class="row checks">
         <label class="check"><input id="capaudio" type="checkbox" /> Desktop (game + comms)</label>
