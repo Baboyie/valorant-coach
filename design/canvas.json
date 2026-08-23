@@ -1,0 +1,31 @@
+{
+  "artboards": [
+    { "file": "Current.dc.html", "x": 0, "y": 0, "w": 560, "h": 1580, "title": "Today" },
+    { "file": "Main.dc.html", "x": 680, "y": 0, "w": 560, "h": 720, "title": "A — Cockpit + tabs" },
+    { "file": "Compact.dc.html", "x": 1360, "y": 0, "w": 560, "h": 720, "title": "B — One screen" }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -190,
+      "w": 400,
+      "text": "The problem, measured: today's window is 720px tall and the content runs to ~1580px. Settings and the gallery — the two things added most recently — sit entirely below the fold.\n\nBoth directions keep the same tokens, type and density as the shipped app. They differ in where things live."
+    },
+    {
+      "id": "dir-a",
+      "x": 680,
+      "y": -190,
+      "w": 400,
+      "text": "A — Cockpit + tabs\n\nState, buffer and the two actions stay pinned at the top; Status / Library / Settings become destinations below.\n\nTradeoff: settings are a click away rather than a scroll, but you can no longer see health and library at once.\n\nClickable: switch tabs, flip Clips/Recordings, click a row to open the player, toggle the mic and mix switches."
+    },
+    {
+      "id": "dir-b",
+      "x": 1360,
+      "y": -190,
+      "w": 400,
+      "text": "B — One screen\n\nNo navigation at all. A dial carries state and buffer together, recent clips sit as a filmstrip, and everything else folds into accordion rows — one open at a time.\n\nTradeoff: nothing is more than one click deep and the last clip is always visible, but a long settings list still scrolls once opened.\n\nClickable: open and close each section."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

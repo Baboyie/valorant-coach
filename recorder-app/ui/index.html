@@ -6,154 +6,213 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Title bar. The target belongs here rather than buried in a status line:
+       "which window is it recording" is the question a recorder must never
+       make you hunt for. -->
   <header>
     <div class="brand">
       <span id="dot" class="dot idle"></span>
       <h1>DEBRIEF</h1>
     </div>
-    <span id="state" class="state">starting…</span>
+    <div class="target-chip">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M8 21h8"></path><path d="M12 17v4"></path></svg>
+      <span id="targetName">—</span>
+    </div>
   </header>
 
-  <section class="panel">
-    <div class="buffer">
-      <div class="buffer-head">
+  <!-- The cockpit: what it is doing, how much is held, and the two actions.
+       Pinned above the tabs so it is never scrolled away. -->
+  <section class="cockpit">
+    <div class="cockpit-head">
+      <div class="cockpit-read">
         <span id="buffered">0.0s</span>
-        <span id="ringsize" class="muted">buffered</span>
+        <span id="bufCaption" class="muted small">buffered</span>
       </div>
-      <div class="bar"><div id="fill" class="fill"></div></div>
+      <span id="stateBadge" class="state-badge">idle</span>
     </div>
+
+    <div class="bar"><div id="fill" class="fill"></div></div>
 
     <div class="actions">
-      <button id="clip" class="primary" disabled>Save clip</button>
-      <button id="record" disabled>Start recording</button>
+      <button id="clip" class="primary" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>
+        <span>Save clip</span>
+      </button>
+      <button id="record" disabled>
+        <svg class="rec-dot" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"></circle></svg>
+        <span id="recordLabel">Record</span>
+      </button>
     </div>
-    <p id="hotkeyhint" class="muted small"></p>
+
+    <p id="hotkeyhint" class="hint"></p>
   </section>
 
-  <section class="panel">
-    <h2>Recorder overhead</h2>
-    <dl class="stats">
-      <dt>CPU</dt><dd id="cpu">—</dd>
-      <dt>RAM</dt><dd id="ram">—</dd>
-      <dt>VRAM</dt><dd id="vram">—</dd>
-      <dt>Disk write</dt><dd id="disk">—</dd>
-    </dl>
-  </section>
+  <nav class="tabs" role="tablist">
+    <button id="navStatus" class="tab active" role="tab">Status</button>
+    <button id="navLibrary" class="tab" role="tab">Library</button>
+    <button id="navSettings" class="tab" role="tab">Settings</button>
+  </nav>
 
-  <section class="panel">
-    <h2>Capture health</h2>
-    <dl class="stats">
-      <dt>Frames kept</dt><dd id="kept">—</dd>
-      <dt>Capture callback p99</dt><dd id="p99">—</dd>
-      <dt>Dropped (ring full)</dt><dd id="dropfull">—</dd>
-      <dt>Dropped (target resized)</dt><dd id="dropresize">—</dd>
-    </dl>
-    <p class="muted small note">
-      Game FPS and frame time are measured out-of-process by the benchmark
-      harness, not here — reading them honestly needs an ETW consumer, and a
-      guessed number would be worse than none.
-    </p>
-  </section>
+  <main class="pane">
 
-  <section class="panel">
-    <div class="gal-head">
-      <h2>Gallery</h2>
-      <div class="tabs">
-        <button id="tabClips" class="tab active">Clips</button>
-        <button id="tabRecs" class="tab">Recordings</button>
-      </div>
-    </div>
-    <ul id="mediaList" class="media"></ul>
-    <p id="noMedia" class="muted small hidden">Nothing here yet.</p>
-  </section>
-
-  <section class="panel">
-    <h2>Settings</h2>
-    <div class="field">
-      <label for="window">Replay window</label>
-      <div class="row"><input id="window" type="number" min="5" max="300" step="5" /><span class="muted">seconds</span></div>
-    </div>
-    <div class="field">
-      <label for="fps">Recording frame rate</label>
-      <div class="row"><input id="fps" type="number" min="30" max="240" step="10" /><span class="muted">fps</span></div>
-    </div>
-    <div class="field">
-      <label for="bitrate">Bitrate</label>
-      <div class="row"><input id="bitrate" type="number" min="0" max="80" step="1" /><span class="muted">Mbps — 0 = auto</span></div>
-    </div>
-    <div class="field">
-      <label for="target">Record</label>
-      <div class="row">
-        <select id="target"></select>
-        <button id="refreshTargets" class="icon" title="Re-scan windows and screens">↻</button>
-      </div>
-      <p class="muted small note">
-        Applies as soon as you pick. A window stays the target when you switch
-        away from it; the session ends only when it closes. Performance numbers
-        are only measured for Valorant.
-      </p>
-    </div>
-    <div class="field">
-      <label>Audio tracks</label>
-      <div class="row checks">
-        <label class="check"><input id="capaudio" type="checkbox" /> Desktop (game + comms)</label>
-        <label class="check"><input id="capmic" type="checkbox" /> Microphone</label>
-      </div>
-
-      <div id="audioDetail">
-        <div class="arow">
-          <span class="alabel">Desktop</span>
-          <select id="devDesktop"></select>
-          <input id="gainDesktop" class="gain" type="range" min="0" max="200" step="5" />
-          <span id="gainDesktopVal" class="muted small gainval">100%</span>
+    <!-- ------------------------------------------------------------ status -->
+    <section id="paneStatus">
+      <div id="lastwrap" class="card hidden">
+        <div class="card-head">
+          <h2>Last saved</h2>
+          <button id="reveal" class="link-btn">Show in folder</button>
         </div>
-        <div class="arow">
-          <span class="alabel">Mic</span>
-          <select id="devMic"></select>
-          <input id="gainMic" class="gain" type="range" min="0" max="200" step="5" />
-          <span id="gainMicVal" class="muted small gainval">100%</span>
+        <p id="lastclip" class="path"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Recorder cost</h2>
         </div>
-        <div class="row">
-          <button id="refreshDevices" class="icon" title="Re-scan audio devices">↻</button>
-          <label class="check"><input id="mixaudio" type="checkbox" /> Combine into one track</label>
+        <div class="metrics">
+          <div class="metric"><span id="cpu">—</span><label>CPU</label></div>
+          <div class="metric"><span id="ram">—</span><label>RAM</label></div>
+          <div class="metric"><span id="vram">—</span><label>VRAM</label></div>
+          <div class="metric"><span id="disk">—</span><label>Disk</label></div>
+        </div>
+        <p id="vramDetail" class="muted small note hidden"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Capture health</h2></div>
+        <ul class="health">
+          <li><span class="hdot" id="dotKept"></span><span class="hlabel">Frames kept</span><span id="kept">—</span></li>
+          <li><span class="hdot" id="dotP99"></span><span class="hlabel">Capture callback p99</span><span id="p99">—</span></li>
+          <li><span class="hdot" id="dotFull"></span><span class="hlabel">Dropped — ring full</span><span id="dropfull">—</span></li>
+          <li><span class="hdot" id="dotResize"></span><span class="hlabel">Dropped — target resized</span><span id="dropresize">—</span></li>
+        </ul>
+        <p class="muted small note">
+          Game FPS is measured out of process by the benchmark harness — an
+          honest number needs an ETW consumer, and a guessed one is worse.
+        </p>
+      </div>
+    </section>
+
+    <!-- ----------------------------------------------------------- library -->
+    <section id="paneLibrary" class="hidden">
+      <div class="lib-head">
+        <div class="segmented">
+          <button id="tabClips" class="seg active">Clips</button>
+          <button id="tabRecs" class="seg">Recordings</button>
+        </div>
+        <button id="openFolder" class="icon" title="Open output folder">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"></path></svg>
+        </button>
+      </div>
+      <ul id="mediaList" class="media"></ul>
+      <p id="noMedia" class="muted small hidden">Nothing here yet.</p>
+    </section>
+
+    <!-- ---------------------------------------------------------- settings -->
+    <section id="paneSettings" class="hidden">
+      <div class="card">
+        <div class="card-head"><h2>Capture</h2></div>
+
+        <div class="field">
+          <label for="target">Record</label>
+          <div class="row">
+            <select id="target"></select>
+            <button id="refreshTargets" class="icon" title="Re-scan windows and screens">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 3v6h-6"></path></svg>
+            </button>
+          </div>
+          <p class="muted small note">
+            Applies as soon as you pick. A window stays the target when you
+            switch away from it; the session ends only when it closes.
+            Performance is only measured for Valorant.
+          </p>
+        </div>
+
+        <div class="triple">
+          <div class="field">
+            <label for="window">Replay window</label>
+            <input id="window" type="number" min="5" max="300" step="5" />
+          </div>
+          <div class="field">
+            <label for="fps">Frame rate</label>
+            <input id="fps" type="number" min="30" max="240" step="10" />
+          </div>
+          <div class="field">
+            <label for="bitrate">Bitrate</label>
+            <input id="bitrate" type="number" min="0" max="80" step="1" />
+          </div>
+        </div>
+        <p class="muted small note">Seconds · fps · Mbps, where 0 means derive from resolution.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Audio</h2>
+          <button id="refreshDevices" class="link-btn">Re-scan devices</button>
+        </div>
+
+        <div class="track">
+          <div class="track-head">
+            <label class="check"><input id="capaudio" type="checkbox" /> <span>Desktop</span></label>
+            <span id="gainDesktopVal" class="muted small gainval">100%</span>
+          </div>
+          <div class="track-row">
+            <select id="devDesktop"></select>
+            <input id="gainDesktop" class="gain" type="range" min="0" max="200" step="5" />
+          </div>
+        </div>
+
+        <div class="track">
+          <div class="track-head">
+            <label class="check"><input id="capmic" type="checkbox" /> <span>Microphone</span></label>
+            <span id="gainMicVal" class="muted small gainval">100%</span>
+          </div>
+          <div class="track-row">
+            <select id="devMic"></select>
+            <input id="gainMic" class="gain" type="range" min="0" max="200" step="5" />
+          </div>
+        </div>
+
+        <label class="check mixrow"><input id="mixaudio" type="checkbox" /> <span>Combine into one track</span></label>
+        <p class="muted small note">
+          Separate tracks let a reviewer mute either side, and are the default.
+          <strong>YouTube keeps only the first track</strong>, so combine them if
+          you want your voice to survive an upload. Volume applies immediately;
+          changing a device restarts capture.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Files &amp; keys</h2></div>
+        <div class="field">
+          <label for="hotkey">Save-clip hotkey</label>
+          <div class="row">
+            <input id="hotkey" type="text" />
+            <span class="muted small">restart to apply</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="outdir">Output folder</label>
+          <input id="outdir" type="text" />
         </div>
       </div>
 
-      <p class="muted small note">
-        Separate tracks let a reviewer mute either side, and are the default.
-        <strong>YouTube keeps only the first track</strong>, so combine them if
-        you want your voice to survive an upload. Volume applies immediately;
-        changing a device restarts capture.
-      </p>
-    </div>
-    <div class="field">
-      <label for="hotkey">Save-clip hotkey</label>
-      <div class="row"><input id="hotkey" type="text" /><span class="muted">restart to apply</span></div>
-    </div>
-    <div class="field">
-      <label for="outdir">Output folder</label>
-      <div class="row"><input id="outdir" type="text" /></div>
-    </div>
-    <button id="save">Save settings</button>
-    <span id="saved" class="muted small"></span>
-  </section>
+      <div class="save-row">
+        <button id="save">Save settings</button>
+        <span id="saved" class="muted small"></span>
+      </div>
+    </section>
 
-  <section id="lastwrap" class="panel hidden">
-    <h2>Last saved</h2>
-    <p id="lastclip" class="path"></p>
-    <button id="reveal">Show in Explorer</button>
-  </section>
+  </main>
 
   <p id="error" class="error hidden"></p>
-
-  <footer class="muted small">
-    Closing this window keeps DEBRIEF buffering in the tray.
-  </footer>
 
   <div id="playerWrap" class="player hidden">
     <div class="player-head">
       <span id="playerTitle" class="muted small"></span>
-      <button id="playerClose" class="icon" title="Close (Esc)">×</button>
+      <button id="playerClose" class="icon" title="Close (Esc)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>
+      </button>
     </div>
     <video id="player" controls></video>
   </div>

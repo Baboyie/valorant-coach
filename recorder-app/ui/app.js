@@ -8,6 +8,8 @@ let currentRecordingPath = null;
 let mediaItems = [];
 let mediaTab = "clip";
 
+/* ---------------------------------------------------------------- config */
+
 async function loadConfig() {
   cfg = await invoke("get_config");
   el("window").value = cfg.window_secs;
@@ -20,11 +22,157 @@ async function loadConfig() {
   el("mixaudio").checked = cfg.mix_audio;
   setGainUI("Desktop", cfg.desktop_gain);
   setGainUI("Mic", cfg.mic_gain);
+  setHotkeyHint();
   await refreshTargets();
   await refreshDevices();
   syncAudioEnabled();
-  el("hotkeyhint").textContent = `Press ${cfg.save_hotkey} in game to save the last ${cfg.window_secs}s.`;
 }
+
+function setHotkeyHint() {
+  if (!cfg) return;
+  el("hotkeyhint").innerHTML =
+    `Press <kbd>${cfg.save_hotkey}</kbd> in game to keep the last ${cfg.window_secs} seconds.`;
+}
+
+/* ------------------------------------------------------------------ tabs */
+
+const PANES = { status: "paneStatus", library: "paneLibrary", settings: "paneSettings" };
+const NAVS = { status: "navStatus", library: "navLibrary", settings: "navSettings" };
+
+function showTab(name) {
+  for (const [key, pane] of Object.entries(PANES)) {
+    el(pane).classList.toggle("hidden", key !== name);
+    el(NAVS[key]).classList.toggle("active", key === name);
+  }
+  // The pane is one scroll container shared by all three; a tab switch that
+  // kept the previous tab's offset would open Settings halfway down.
+  document.querySelector(".pane").scrollTop = 0;
+  if (name === "library") loadMedia();
+}
+for (const [key, nav] of Object.entries(NAVS)) {
+  el(nav).addEventListener("click", () => showTab(key));
+}
+
+/* ---------------------------------------------------------------- status */
+
+function fmtState(s) {
+  // A queued action outranks the idle text: "window is minimised — recording
+  // starts when it comes back" is the difference between waiting and broken.
+  if (s.pending) return s.pending;
+  const auto = !cfg || !cfg.target || cfg.target.kind === "valorant";
+  if (s.state === "recording") return "recording";
+  if (s.state === "buffering") return "buffering";
+  if (s.game_running) return "starting…";
+  return auto ? "waiting for Valorant" : "target not available";
+}
+
+function targetLabel(s) {
+  if (s.target_title) return s.target_title;
+  if (!cfg || !cfg.target) return "—";
+  if (cfg.target.kind === "valorant") return "Valorant";
+  if (cfg.target.kind === "monitor") return "Screen";
+  return cfg.target.title || "Window";
+}
+
+async function tick() {
+  let s;
+  try {
+    s = await invoke("get_status");
+  } catch (e) {
+    return;
+  }
+
+  // A finished recording or a fresh clip should appear without anyone hunting
+  // for a refresh button.
+  if (prevState === "recording" && s.state !== "recording") loadMedia();
+  prevState = s.state;
+  currentRecordingPath = s.recording_path || null;
+
+  el("dot").className = "dot " + s.state;
+  el("targetName").textContent = targetLabel(s);
+
+  const badge = el("stateBadge");
+  badge.textContent = s.pending ? "waiting" : s.state;
+  badge.className = "state-badge " + (s.pending ? "" : s.state);
+
+  // While recording there is no ring, so show elapsed recording time in the
+  // same slot rather than a frozen 0.0s that looks like a stall.
+  const fill = el("fill");
+  if (s.state === "recording") {
+    el("buffered").textContent = s.recording_secs.toFixed(1) + "s";
+    el("bufCaption").textContent = "recorded to file";
+    fill.style.width = "100%";
+    fill.classList.add("recording");
+  } else {
+    el("buffered").textContent = s.buffered_secs.toFixed(1) + "s";
+    const target = cfg ? cfg.window_secs : 30;
+    el("bufCaption").textContent =
+      s.ring_mb > 0 ? `of ${target}s buffered · ${s.ring_mb.toFixed(1)} MB` : fmtState(s);
+    fill.style.width = Math.min(100, (s.buffered_secs / target) * 100).toFixed(1) + "%";
+    fill.classList.remove("recording");
+  }
+
+  // §17: never fake these. The engine sends null until it has a real delta,
+  // and an em dash is the honest rendering of "not measured yet".
+  const p = s.perf;
+  el("cpu").textContent = p ? p.cpu_pct.toFixed(2) + "%" : "—";
+  el("ram").textContent = p ? p.ram_mb.toFixed(0) + "MB" : "—";
+  el("vram").textContent = p && p.vram_mb != null ? p.vram_mb.toFixed(0) + "MB" : "—";
+  el("disk").textContent = p ? p.disk_write_mbps.toFixed(1) + "MB/s" : "—";
+  const vd = el("vramDetail");
+  if (p && p.vram_mb != null) {
+    vd.textContent = `VRAM budget ${p.vram_budget_mb.toFixed(0)} MB on the capture adapter.`;
+    vd.classList.remove("hidden");
+  } else {
+    vd.classList.add("hidden");
+  }
+
+  el("kept").textContent = s.frames_kept.toLocaleString();
+  el("p99").textContent = s.callback_p99_us ? s.callback_p99_us + " µs" : "—";
+  el("dropfull").textContent = s.dropped_ring_full.toLocaleString();
+  el("dropresize").textContent = s.dropped_resized.toLocaleString();
+  // Green means measured-and-fine, red means a real drop. Grey stays grey
+  // until there is something to report, for the same reason as the em dashes.
+  el("dotKept").className = "hdot " + (s.frames_kept > 0 ? "ok" : "");
+  el("dotP99").className = "hdot " + (s.callback_p99_us ? "ok" : "");
+  el("dotFull").className = "hdot " + (s.dropped_ring_full > 0 ? "bad" : s.frames_kept > 0 ? "ok" : "");
+  el("dotResize").className = "hdot " + (s.dropped_resized > 0 ? "bad" : s.frames_kept > 0 ? "ok" : "");
+
+  el("clip").disabled = s.state !== "buffering";
+  el("record").disabled = !s.game_running && !s.pending;
+  const rec = s.state === "recording";
+  el("recordLabel").textContent = rec ? "Stop" : "Record";
+  el("record").className = rec ? "rec" : "";
+
+  if (s.last_clip) {
+    if (lastClipPath && s.last_clip !== lastClipPath) loadMedia();
+    lastClipPath = s.last_clip;
+    el("lastwrap").classList.remove("hidden");
+    el("lastclip").textContent =
+      s.last_clip + (s.last_save_ms != null ? `  (saved in ${Math.round(s.last_save_ms)} ms)` : "");
+  }
+
+  const err = el("error");
+  if (s.last_error) {
+    err.textContent = s.last_error;
+    err.classList.remove("hidden");
+  } else {
+    err.classList.add("hidden");
+  }
+}
+
+el("clip").addEventListener("click", () => invoke("save_clip"));
+
+el("record").addEventListener("click", async () => {
+  const s = await invoke("get_status");
+  await invoke(s.state === "recording" ? "stop_recording" : "start_recording");
+});
+
+el("reveal").addEventListener("click", () => {
+  if (lastClipPath) invoke("reveal_in_explorer", { path: lastClipPath });
+});
+
+/* --------------------------------------------------------------- targets */
 
 // The picker is rebuilt from a live scan: windows come and go, and a stale
 // list is how someone records the wrong thing. The current target stays
@@ -61,99 +209,6 @@ async function refreshTargets() {
   sel.value = targetKey(current);
 }
 
-function fmtState(s) {
-  // Name the target unless it is Valorant, whose name is the product's —
-  // “buffering: Notepad” rather than leaving the user to find out from the
-  // clip which window they actually recorded.
-  const auto = !cfg || !cfg.target || cfg.target.kind === "valorant";
-  const named = (verb) => (!auto && s.target_title ? `${verb}: ${s.target_title}` : verb);
-  // A queued action outranks the idle text: "window is minimised — recording
-  // starts when it comes back" is the difference between waiting and broken.
-  if (s.pending) return s.pending;
-  if (s.state === "recording") return named("recording");
-  if (s.state === "buffering") return named("buffering");
-  if (s.game_running) return named("starting…");
-  return auto ? "waiting for Valorant" : "chosen window or screen is not available";
-}
-
-async function tick() {
-  let s;
-  try {
-    s = await invoke("get_status");
-  } catch (e) {
-    return;
-  }
-
-  // A finished recording or a fresh clip should appear without anyone
-  // hunting for a refresh button.
-  if (prevState === "recording" && s.state !== "recording") loadMedia();
-  prevState = s.state;
-  currentRecordingPath = s.recording_path || null;
-
-  el("dot").className = "dot " + s.state;
-  el("state").textContent = fmtState(s);
-
-  // While recording there is no ring, so show elapsed recording time in the
-  // same slot rather than a frozen 0.0s that looks like a stall.
-  if (s.state === "recording") {
-    el("buffered").textContent = s.recording_secs.toFixed(1) + "s";
-    el("ringsize").textContent = "recorded";
-    el("fill").style.width = "100%";
-  } else {
-    el("buffered").textContent = s.buffered_secs.toFixed(1) + "s";
-    el("ringsize").textContent =
-      s.ring_mb > 0 ? `buffered · ${s.ring_mb.toFixed(1)} MB` : "buffered";
-    const target = cfg ? cfg.window_secs : 30;
-    el("fill").style.width =
-      Math.min(100, (s.buffered_secs / target) * 100).toFixed(1) + "%";
-  }
-
-  // §17: never fake these. The engine sends null until it has a real delta,
-  // and an em dash is the honest rendering of "not measured yet".
-  const p = s.perf;
-  el("cpu").textContent = p ? p.cpu_pct.toFixed(2) + " %" : "—";
-  el("ram").textContent = p ? p.ram_mb.toFixed(0) + " MB" : "—";
-  el("vram").textContent =
-    p && p.vram_mb != null
-      ? `${p.vram_mb.toFixed(0)} MB of ${p.vram_budget_mb.toFixed(0)}`
-      : "—";
-  el("disk").textContent = p ? p.disk_write_mbps.toFixed(1) + " MB/s" : "—";
-
-  el("kept").textContent = s.frames_kept.toLocaleString();
-  el("p99").textContent = s.callback_p99_us ? s.callback_p99_us + " µs" : "—";
-  el("dropfull").textContent = s.dropped_ring_full.toLocaleString();
-  el("dropresize").textContent = s.dropped_resized.toLocaleString();
-
-  el("clip").disabled = s.state !== "buffering";
-  el("record").disabled = !s.game_running;
-  const rec = s.state === "recording";
-  el("record").textContent = rec ? "Stop recording" : "Start recording";
-  el("record").className = rec ? "rec" : "";
-
-  if (s.last_clip) {
-    if (lastClipPath && s.last_clip !== lastClipPath) loadMedia();
-    lastClipPath = s.last_clip;
-    el("lastwrap").classList.remove("hidden");
-    el("lastclip").textContent =
-      s.last_clip + (s.last_save_ms != null ? `  (saved in ${Math.round(s.last_save_ms)} ms)` : "");
-  }
-
-  const err = el("error");
-  if (s.last_error) {
-    err.textContent = s.last_error;
-    err.classList.remove("hidden");
-  } else {
-    err.classList.add("hidden");
-  }
-}
-
-el("clip").addEventListener("click", () => invoke("save_clip"));
-
-el("record").addEventListener("click", async () => {
-  const s = await invoke("get_status");
-  await invoke(s.state === "recording" ? "stop_recording" : "start_recording");
-});
-
 // Picking a target applies immediately — it is a choice, not a setting, and
 // Discord trained everyone to expect the share to start on the click.
 el("target").addEventListener("change", async () => {
@@ -161,46 +216,13 @@ el("target").addEventListener("change", async () => {
   try {
     await invoke("set_config", { newConfig: next });
     cfg = next;
-    el("saved").textContent = "target applied";
-    setTimeout(() => (el("saved").textContent = ""), 2500);
+    flash("target applied");
   } catch (e) {
-    el("saved").textContent = "could not apply: " + e;
+    flash("could not apply: " + e);
   }
 });
 
 el("refreshTargets").addEventListener("click", refreshTargets);
-
-el("reveal").addEventListener("click", () => {
-  if (lastClipPath) invoke("reveal_in_explorer", { path: lastClipPath });
-});
-
-el("save").addEventListener("click", async () => {
-  const next = {
-    ...cfg,
-    window_secs: parseInt(el("window").value, 10),
-    fps: parseInt(el("fps").value, 10),
-    bitrate_mbps: parseInt(el("bitrate").value, 10),
-    save_hotkey: el("hotkey").value,
-    output_dir: el("outdir").value,
-    capture_audio: el("capaudio").checked,
-    capture_mic: el("capmic").checked,
-    mix_audio: el("mixaudio").checked,
-    desktop_gain: pctToGain(el("gainDesktop").value),
-    mic_gain: pctToGain(el("gainMic").value),
-    desktop_device: el("devDesktop").value,
-    mic_device: el("devMic").value,
-    target: JSON.parse(el("target").value),
-  };
-  try {
-    await invoke("set_config", { newConfig: next });
-    cfg = next;
-    el("hotkeyhint").textContent = `Press ${cfg.save_hotkey} in game to save the last ${cfg.window_secs}s.`;
-    el("saved").textContent = "saved — session restarting";
-    setTimeout(() => (el("saved").textContent = ""), 2500);
-  } catch (e) {
-    el("saved").textContent = "could not save: " + e;
-  }
-});
 
 /* ----------------------------------------------------------------- audio */
 
@@ -250,7 +272,7 @@ function fillDevices(id, list, chosen) {
   sel.value = chosen || "";
 }
 
-// Nothing below the checkboxes means anything if the source is off.
+// Nothing below a track's checkbox means anything if the source is off.
 function syncAudioEnabled() {
   const d = el("capaudio").checked;
   const m = el("capmic").checked;
@@ -261,7 +283,7 @@ function syncAudioEnabled() {
   // Mixing is only meaningful with two things to mix.
   const canMix = d && m;
   el("mixaudio").disabled = !canMix;
-  el("mixaudio").parentElement.classList.toggle("dim", !canMix);
+  el("mixaudio").parentElement.classList.toggle("muted", !canMix);
 }
 
 // Volume is applied live rather than on Save: the engine pushes gain at the
@@ -322,17 +344,23 @@ function renderMedia() {
     (m) => m.kind === mediaTab && m.path !== currentRecordingPath
   );
   el("noMedia").classList.toggle("hidden", rows.length > 0);
+
   for (const m of rows) {
     const li = document.createElement("li");
+    li.title = m.path;
+    li.addEventListener("click", () => openPlayer(m));
+
+    const thumb = document.createElement("div");
+    thumb.className = "thumb";
+    thumb.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>';
 
     const name = document.createElement("div");
     name.className = "m-name";
     name.textContent = m.player ? `${m.player} — ${m.name}` : m.name;
-    name.title = m.path;
 
-    const sub = document.createElement("div");
-    sub.className = "m-meta muted small";
-    sub.textContent = [
+    const meta = document.createElement("div");
+    meta.className = "m-meta";
+    meta.textContent = [
       fmtWhen(m),
       fmtDur(m.duration_secs),
       m.width && m.height ? `${m.width}×${m.height}` : null,
@@ -341,21 +369,37 @@ function renderMedia() {
 
     const left = document.createElement("div");
     left.className = "m-left";
-    left.append(name, sub);
+    left.append(name, meta);
 
-    const play = document.createElement("button");
-    play.textContent = "Play";
-    play.addEventListener("click", () => openPlayer(m));
+    const badges = document.createElement("div");
+    badges.className = "badges";
+    for (const t of m.audio_tracks) {
+      const b = document.createElement("span");
+      b.className = "badge";
+      b.textContent = t;
+      badges.appendChild(b);
+    }
 
-    const show = document.createElement("button");
-    show.textContent = "Folder";
-    show.title = "Show in Explorer";
-    show.addEventListener("click", () => invoke("reveal_in_explorer", { path: m.path }));
-
-    li.append(left, play, show);
+    li.append(thumb, left, badges);
     list.appendChild(li);
   }
 }
+
+const setLibTab = (tab) => {
+  mediaTab = tab;
+  el("tabClips").classList.toggle("active", tab === "clip");
+  el("tabRecs").classList.toggle("active", tab === "recording");
+  renderMedia();
+};
+el("tabClips").addEventListener("click", () => setLibTab("clip"));
+el("tabRecs").addEventListener("click", () => setLibTab("recording"));
+
+el("openFolder").addEventListener("click", () => {
+  const any = mediaItems.find((m) => m.kind === mediaTab) || mediaItems[0];
+  if (any) invoke("reveal_in_explorer", { path: any.path });
+});
+
+/* ---------------------------------------------------------------- player */
 
 // The media: scheme is served by the app itself with range support, so seeking
 // works and nothing ever loads a whole recording into memory.
@@ -392,14 +436,39 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !el("playerWrap").classList.contains("hidden")) closePlayer();
 });
 
-const setTab = (tab) => {
-  mediaTab = tab;
-  el("tabClips").classList.toggle("active", tab === "clip");
-  el("tabRecs").classList.toggle("active", tab === "recording");
-  renderMedia();
-};
-el("tabClips").addEventListener("click", () => setTab("clip"));
-el("tabRecs").addEventListener("click", () => setTab("recording"));
+/* -------------------------------------------------------------- settings */
+
+function flash(msg) {
+  el("saved").textContent = msg;
+  setTimeout(() => (el("saved").textContent = ""), 2500);
+}
+
+el("save").addEventListener("click", async () => {
+  const next = {
+    ...cfg,
+    window_secs: parseInt(el("window").value, 10),
+    fps: parseInt(el("fps").value, 10),
+    bitrate_mbps: parseInt(el("bitrate").value, 10),
+    save_hotkey: el("hotkey").value,
+    output_dir: el("outdir").value,
+    capture_audio: el("capaudio").checked,
+    capture_mic: el("capmic").checked,
+    mix_audio: el("mixaudio").checked,
+    desktop_gain: pctToGain(el("gainDesktop").value),
+    mic_gain: pctToGain(el("gainMic").value),
+    desktop_device: el("devDesktop").value,
+    mic_device: el("devMic").value,
+    target: JSON.parse(el("target").value),
+  };
+  try {
+    await invoke("set_config", { newConfig: next });
+    cfg = next;
+    setHotkeyHint();
+    flash("saved — session restarting");
+  } catch (e) {
+    flash("could not save: " + e);
+  }
+});
 
 loadConfig().then(tick);
 loadMedia();

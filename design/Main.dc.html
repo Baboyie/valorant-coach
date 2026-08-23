@@ -1,0 +1,398 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; }
+    a { color: #3cc8b4; } a:hover { color: #6fdccb; }
+    * { box-sizing: border-box; }
+    .dc-scroll::-webkit-scrollbar { width: 8px; }
+    .dc-scroll::-webkit-scrollbar-thumb { background: #242a3d; border-radius: 4px; }
+    .dc-scroll::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</helmet>
+
+<div style="width: 560px; height: 720px; background: #0e1018; color: #e8ecf5; font: 14px/1.5 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif; display: flex; flex-direction: column; overflow: hidden; position: relative; user-select: none;">
+
+  <!-- Title bar: identity plus the one fact that was previously buried in a
+       small grey line — what is actually being recorded. -->
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px 10px; flex: none;">
+    <div style="display: flex; align-items: center; gap: 9px; min-width: 0;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; flex: none; background: {{dotColor}}; box-shadow: {{dotGlow}};"></div>
+      <div style="font-size: 15px; font-weight: 600; letter-spacing: 0.14em;">DEBRIEF</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; min-width: 0; color: #8b93a8; font-size: 12px;">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M8 21h8"></path><path d="M12 17v4"></path></svg>
+      <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{targetName}}</span>
+    </div>
+  </div>
+
+  <!-- The cockpit. Everything the app is for, always visible, never scrolled
+       away: what it is doing, how much is buffered, and the two actions. -->
+  <div style="flex: none; margin: 0 16px 12px; padding: 14px 16px 16px; background: #161a27; border: 1px solid #242a3d; border-radius: 12px;">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px;">
+      <div style="display: flex; align-items: baseline; gap: 10px; min-width: 0;">
+        <div style="font-size: 32px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1;">{{bufferLabel}}</div>
+        <div style="font-size: 12px; color: #8b93a8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{bufferCaption}}</div>
+      </div>
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; color: {{stateColor}}; flex: none;">{{stateLabel}}</div>
+    </div>
+
+    <div style="height: 6px; background: #0b0d15; border-radius: 3px; overflow: hidden;">
+      <div style="height: 100%; width: {{fillPct}}; background: {{stateColor}}; border-radius: 3px;"></div>
+    </div>
+
+    <div style="display: flex; gap: 8px; margin-top: 14px;">
+      <button onClick="{{noop}}" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 12px; background: {{accent}}; color: #06231f; border: 1px solid {{accent}}; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>
+        Save clip
+      </button>
+      <button onClick="{{noop}}" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 12px; background: {{recBg}}; color: {{recFg}}; border: 1px solid {{recBorder}}; border-radius: 8px; font: inherit; cursor: pointer;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="7" fill="currentColor" stroke="none"></circle></svg>
+        {{recLabel}}
+      </button>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 6px; margin-top: 11px; color: #8b93a8; font-size: 11.5px;">
+      <span>Press</span>
+      <kbd style="padding: 2px 6px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 4px; font-family: Consolas, monospace; font-size: 11px; color: #e8ecf5;">Alt+F10</kbd>
+      <span>in game to keep the last 30 seconds</span>
+    </div>
+  </div>
+
+  <!-- Three destinations instead of one endless scroll. -->
+  <div style="flex: none; display: flex; gap: 4px; margin: 0 16px; padding: 3px; background: #12151f; border: 1px solid #242a3d; border-radius: 9px;">
+    <button onClick="{{goStatus}}" style="{{tabStatus}}">Status</button>
+    <button onClick="{{goLibrary}}" style="{{tabLibrary}}">Library</button>
+    <button onClick="{{goSettings}}" style="{{tabSettings}}">Settings</button>
+  </div>
+
+  <div class="dc-scroll" style="flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 16px;">
+
+    <!-- STATUS ------------------------------------------------------------ -->
+    <sc-if value="{{isStatus}}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+
+        <div style="padding: 13px 15px; background: #161a27; border: 1px solid #242a3d; border-radius: 11px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px;">
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #8b93a8;">Recorder cost</div>
+            <div style="font-size: 11px; color: {{accent}};">within budget</div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;">
+            <sc-for list="{{costs}}" as="m" hint-placeholder-count="4">
+              <div>
+                <div style="font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums;">{{m.value}}</div>
+                <div style="font-size: 11px; color: #8b93a8; margin-top: 1px;">{{m.label}}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="padding: 13px 15px; background: #161a27; border: 1px solid #242a3d; border-radius: 11px;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #8b93a8; margin-bottom: 10px;">Capture health</div>
+          <div style="display: flex; flex-direction: column; gap: 7px;">
+            <sc-for list="{{health}}" as="h" hint-placeholder-count="4">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+                <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                  <div style="width: 6px; height: 6px; border-radius: 50%; flex: none; background: {{h.dot}};"></div>
+                  <div style="color: #8b93a8; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{h.label}}</div>
+                </div>
+                <div style="font-variant-numeric: tabular-nums; font-size: 13px; flex: none;">{{h.value}}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="margin-top: 11px; padding-top: 11px; border-top: 1px solid #242a3d; color: #8b93a8; font-size: 11.5px; line-height: 1.45;">
+            Game FPS is measured out of process by the benchmark harness, not here — an honest number needs an ETW consumer, and a guessed one would be worse than none.
+          </div>
+        </div>
+
+      </div>
+    </sc-if>
+
+    <!-- LIBRARY ----------------------------------------------------------- -->
+    <sc-if value="{{isLibrary}}" hint-placeholder-val="{{ true }}">
+      <div>
+        <div style="display: flex; gap: 6px; margin-bottom: 11px;">
+          <button onClick="{{goClips}}" style="{{segClips}}">Clips</button>
+          <button onClick="{{goRecordings}}" style="{{segRecordings}}">Recordings</button>
+          <div style="flex: 1;"></div>
+          <button onClick="{{noop}}" title="Open folder" style="flex: none; display: flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; background: #1e2436; color: #8b93a8; border: 1px solid #242a3d; border-radius: 7px; cursor: pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"></path></svg>
+          </button>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 7px;">
+          <sc-for list="{{items}}" as="it" hint-placeholder-count="4">
+            <div onClick="{{it.open}}" style="display: flex; align-items: center; gap: 11px; padding: 9px 11px; background: #12151f; border: 1px solid #242a3d; border-radius: 9px; cursor: pointer;">
+              <div style="position: relative; flex: none; width: 62px; height: 36px; border-radius: 6px; background: {{it.thumb}}; display: flex; align-items: center; justify-content: center;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="#e8ecf5" stroke="none" style="opacity: 0.9;"><path d="M8 5v14l11-7z"></path></svg>
+              </div>
+              <div style="flex: 1; min-width: 0;">
+                <div style="font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{it.title}}</div>
+                <div style="font-size: 11.5px; color: #8b93a8; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{it.meta}}</div>
+              </div>
+              <div style="flex: none; display: flex; align-items: center; gap: 5px;">
+                <sc-for list="{{it.badges}}" as="b" hint-placeholder-count="1">
+                  <div style="padding: 2px 7px; border-radius: 20px; font-size: 10.5px; letter-spacing: 0.04em; color: #8b93a8; border: 1px solid #242a3d;">{{b.text}}</div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- SETTINGS ---------------------------------------------------------- -->
+    <sc-if value="{{isSettings}}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+
+        <div style="padding: 13px 15px; background: #161a27; border: 1px solid #242a3d; border-radius: 11px;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #8b93a8; margin-bottom: 11px;">Capture</div>
+
+          <div style="margin-bottom: 11px;">
+            <div style="font-size: 12px; color: #8b93a8; margin-bottom: 5px;">Record</div>
+            <div style="display: flex; align-items: center; gap: 7px;">
+              <div style="flex: 1; min-width: 0; padding: 7px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 7px; font-size: 13px; display: flex; align-items: center; justify-content: space-between;">
+                <span>Valorant — auto-detect</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8b93a8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+              </div>
+              <button onClick="{{noop}}" title="Re-scan" style="flex: none; width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; background: #1e2436; color: #8b93a8; border: 1px solid #242a3d; border-radius: 7px; cursor: pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 3v6h-6"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px;">
+            <sc-for list="{{captureFields}}" as="f" hint-placeholder-count="3">
+              <div>
+                <div style="font-size: 12px; color: #8b93a8; margin-bottom: 5px;">{{f.label}}</div>
+                <div style="padding: 7px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 7px; font-size: 13px; font-variant-numeric: tabular-nums;">{{f.value}}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="padding: 13px 15px; background: #161a27; border: 1px solid #242a3d; border-radius: 11px;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #8b93a8; margin-bottom: 11px;">Audio</div>
+
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <sc-for list="{{tracks}}" as="t" hint-placeholder-count="2">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                  <div onClick="{{t.toggle}}" style="{{t.switchStyle}}">
+                    <div style="{{t.knobStyle}}"></div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 6px; color: {{t.labelColor}};">
+                    <span style="font-size: 13px;">{{t.name}}</span>
+                  </div>
+                  <div style="flex: 1;"></div>
+                  <div style="font-size: 11.5px; color: #8b93a8; font-variant-numeric: tabular-nums;">{{t.gainLabel}}</div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; opacity: {{t.opacity}};">
+                  <div style="flex: 1; min-width: 0; padding: 6px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 7px; font-size: 12px; color: #8b93a8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{t.device}}</div>
+                  <div style="flex: none; width: 104px; height: 4px; background: #0b0d15; border-radius: 2px; position: relative;">
+                    <div style="position: absolute; left: 0; top: 0; height: 100%; width: {{t.gainPct}}; background: {{accent}}; border-radius: 2px;"></div>
+                    <div style="position: absolute; left: {{t.gainPct}}; top: 50%; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; background: {{accent}}; border-radius: 50%;"></div>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 11px; border-top: 1px solid #242a3d;">
+            <div onClick="{{toggleMix}}" style="{{mixSwitch}}">
+              <div style="{{mixKnob}}"></div>
+            </div>
+            <div style="min-width: 0;">
+              <div style="font-size: 13px;">Combine into one track</div>
+              <div style="font-size: 11.5px; color: #8b93a8; line-height: 1.4;">YouTube keeps only the first track, so your voice is dropped on upload unless this is on.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding: 13px 15px; background: #161a27; border: 1px solid #242a3d; border-radius: 11px;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #8b93a8; margin-bottom: 11px;">Files &amp; keys</div>
+          <div style="display: flex; flex-direction: column; gap: 9px;">
+            <div>
+              <div style="font-size: 12px; color: #8b93a8; margin-bottom: 5px;">Save-clip hotkey</div>
+              <div style="padding: 7px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 7px; font-size: 13px; font-family: Consolas, monospace;">Alt+F10</div>
+            </div>
+            <div>
+              <div style="font-size: 12px; color: #8b93a8; margin-bottom: 5px;">Output folder</div>
+              <div style="padding: 7px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 7px; font-size: 12px; font-family: Consolas, monospace; color: #8b93a8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">C:\Users\babuo\Videos\DEBRIEF</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </sc-if>
+  </div>
+
+  <!-- Player overlay, reachable from Library. -->
+  <sc-if value="{{playerOpen}}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; background: rgba(5, 6, 10, 0.95); display: flex; flex-direction: column; padding: 14px; z-index: 50;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px;">
+        <div style="min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{playerTitle}}</div>
+        <button onClick="{{closePlayer}}" style="flex: none; width: 30px; height: 30px; padding: 0; display: flex; align-items: center; justify-content: center; background: #1e2436; color: #e8ecf5; border: 1px solid #242a3d; border-radius: 7px; cursor: pointer;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div style="flex: 1; min-height: 0; background: #000; border-radius: 9px; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden;">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#242a3d" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><path d="M10 8l6 4-6 4z" fill="#242a3d" stroke="none"></path></svg>
+        <div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 12px; background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);">
+          <div style="height: 3px; background: rgba(255,255,255,0.18); border-radius: 2px; margin-bottom: 8px;">
+            <div style="width: 34%; height: 100%; background: {{accent}}; border-radius: 2px;"></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; color: #e8ecf5; font-size: 11.5px; font-variant-numeric: tabular-nums;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"></path></svg>
+            <span>0:10 / 0:30</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "state": {"editor": "enum", "options": ["idle", "buffering", "recording"], "default": "buffering", "tsType": "string"},
+  "accent": {"editor": "color", "default": "#3cc8b4", "options": ["#3cc8b4", "#ff4655", "#7c8cf8", "#f0a742"]},
+  "$preview": {"width": 560, "height": 720}
+}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#3cc8b4';
+    const REC = '#ff4655';
+    const MUTED = '#8b93a8';
+    const state = this.props.state ?? 'buffering';
+    const tab = this.state.tab ?? 'status';
+    const lib = this.state.lib ?? 'clips';
+    const mix = this.state.mix ?? false;
+    const micOn = this.state.micOn ?? true;
+
+    const recording = state === 'recording';
+    const buffering = state === 'buffering';
+
+    const stateColor = recording ? REC : buffering ? accent : MUTED;
+    const stateLabel = recording ? 'recording' : buffering ? 'buffering' : 'idle';
+
+    const tabStyle = (on) =>
+      'flex: 1; padding: 7px 10px; background: ' + (on ? '#1e2436' : 'transparent') +
+      '; color: ' + (on ? '#e8ecf5' : MUTED) +
+      '; border: 1px solid ' + (on ? '#2f3854' : 'transparent') +
+      '; border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer;';
+
+    const segStyle = (on) =>
+      'flex: none; padding: 5px 13px; background: ' + (on ? '#1e2436' : 'transparent') +
+      '; color: ' + (on ? accent : MUTED) +
+      '; border: 1px solid ' + (on ? accent : '#242a3d') +
+      '; border-radius: 20px; font: inherit; font-size: 12px; cursor: pointer;';
+
+    const switchStyle = (on) =>
+      'flex: none; width: 32px; height: 18px; border-radius: 10px; padding: 2px; cursor: pointer; display: flex; justify-content: ' +
+      (on ? 'flex-end' : 'flex-start') +
+      '; background: ' + (on ? accent : '#242a3d') + ';';
+    const knobStyle = (on) =>
+      'width: 14px; height: 14px; border-radius: 50%; background: ' + (on ? '#06231f' : '#8b93a8') + ';';
+
+    const clips = [
+      { title: 'Baboyie#EUW — clip-20260822-065107', meta: 'Sat 22 Aug, 06:51 · 0:30 · 1600x900 · 38.1 MB', thumb: 'linear-gradient(135deg, #1d2b3a, #2a3f52)', badges: [{ text: 'desktop' }, { text: 'mic' }] },
+      { title: 'Baboyie#EUW — clip-20260822-065102', meta: 'Sat 22 Aug, 06:51 · 0:30 · 1600x900 · 38.9 MB', thumb: 'linear-gradient(135deg, #2a2338, #3d2f4f)', badges: [{ text: 'desktop' }] },
+      { title: 'clip-20260815-123534', meta: 'Fri 15 Aug, 12:35 · 0:30 · 1600x900 · 16.0 MB', thumb: 'linear-gradient(135deg, #1f2f2c, #2d4a43)', badges: [{ text: 'desktop' }] }
+    ];
+    const recordings = [
+      { title: 'recording-20260822-204846', meta: 'Sat 22 Aug, 20:48 · 2:05 · 1602x932 · 687 MB', thumb: 'linear-gradient(135deg, #2b2418, #493c25)', badges: [{ text: 'desktop' }] },
+      { title: 'recording-20260822-184130', meta: 'Sat 22 Aug, 18:41 · 2:05 · 1602x932 · 687 MB', thumb: 'linear-gradient(135deg, #1a2436, #26364f)', badges: [{ text: 'desktop' }] }
+    ];
+    const source = lib === 'clips' ? clips : recordings;
+    const items = source.map((it) => ({
+      ...it,
+      open: () => this.setState({ player: it.title })
+    }));
+
+    return {
+      accent,
+      stateColor,
+      stateLabel,
+      dotColor: stateColor,
+      dotGlow: state === 'idle' ? 'none' : '0 0 8px ' + stateColor,
+      targetName: 'Valorant',
+
+      bufferLabel: recording ? '2:05' : buffering ? '28.4s' : '0.0s',
+      bufferCaption: recording ? 'recorded to file' : buffering ? 'of 30s buffered · 214 MB' : 'waiting for Valorant',
+      fillPct: recording ? '100%' : buffering ? '95%' : '0%',
+
+      recLabel: recording ? 'Stop' : 'Record',
+      recBg: recording ? REC : '#1e2436',
+      recFg: recording ? '#ffffff' : '#e8ecf5',
+      recBorder: recording ? REC : '#242a3d',
+
+      isStatus: tab === 'status',
+      isLibrary: tab === 'library',
+      isSettings: tab === 'settings',
+      tabStatus: tabStyle(tab === 'status'),
+      tabLibrary: tabStyle(tab === 'library'),
+      tabSettings: tabStyle(tab === 'settings'),
+      goStatus: () => this.setState({ tab: 'status' }),
+      goLibrary: () => this.setState({ tab: 'library' }),
+      goSettings: () => this.setState({ tab: 'settings' }),
+
+      segClips: segStyle(lib === 'clips'),
+      segRecordings: segStyle(lib === 'recordings'),
+      goClips: () => this.setState({ lib: 'clips' }),
+      goRecordings: () => this.setState({ lib: 'recordings' }),
+      items,
+
+      costs: [
+        { label: 'CPU', value: '0.5%' },
+        { label: 'RAM', value: '87MB' },
+        { label: 'VRAM', value: '340MB' },
+        { label: 'Disk', value: '14MB/s' }
+      ],
+      health: [
+        { label: 'Frames kept', value: '102,418', dot: accent },
+        { label: 'Capture callback p99', value: '412 \u00b5s', dot: accent },
+        { label: 'Dropped — ring full', value: '0', dot: accent },
+        { label: 'Dropped — target resized', value: '0', dot: accent }
+      ],
+
+      captureFields: [
+        { label: 'Replay window', value: '30 s' },
+        { label: 'Frame rate', value: '60 fps' },
+        { label: 'Bitrate', value: 'Auto' }
+      ],
+
+      tracks: [
+        {
+          name: 'Desktop', device: 'Default \u2014 Speakers (Realtek)', gainLabel: '100%', gainPct: '50%',
+          switchStyle: switchStyle(true), knobStyle: knobStyle(true), labelColor: '#e8ecf5', opacity: '1',
+          toggle: () => {}
+        },
+        {
+          name: 'Microphone', device: micOn ? 'HyperX QuadCast S' : 'Default', gainLabel: micOn ? '70%' : 'off',
+          gainPct: micOn ? '35%' : '0%',
+          switchStyle: switchStyle(micOn), knobStyle: knobStyle(micOn),
+          labelColor: micOn ? '#e8ecf5' : MUTED, opacity: micOn ? '1' : '0.45',
+          toggle: () => this.setState({ micOn: !micOn })
+        }
+      ],
+      mixSwitch: switchStyle(mix),
+      mixKnob: knobStyle(mix),
+      toggleMix: () => this.setState({ mix: !mix }),
+
+      playerOpen: this.state.player != null,
+      playerTitle: this.state.player ?? '',
+      closePlayer: () => this.setState({ player: null }),
+      noop: () => {}
+    };
+  }
+}
+</script>
+</body>
+</html>

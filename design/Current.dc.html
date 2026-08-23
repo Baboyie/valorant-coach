@@ -1,0 +1,187 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; }
+    a { color: #3cc8b4; } a:hover { color: #6fdccb; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<!-- Today's UI, rebuilt from ui/index.html and ui/style.css at their real
+     values. The artboard is as tall as the content actually is: the window is
+     720px, so everything below the dashed line needs scrolling to reach. -->
+<div style="width: 560px; background: #0e1018; color: #e8ecf5; font: 14px/1.5 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif; padding: 16px; user-select: none;">
+
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <div style="width: 10px; height: 10px; border-radius: 50%; background: #3cc8b4; box-shadow: 0 0 8px #3cc8b4;"></div>
+      <div style="font-size: 17px; margin: 0; letter-spacing: 0.14em; font-weight: 700;">DEBRIEF</div>
+    </div>
+    <div style="font-size: 12px; color: #8b93a8;">buffering</div>
+  </div>
+
+  <div style="background: #161a27; border: 1px solid #242a3d; border-radius: 10px; padding: 14px; margin-bottom: 12px;">
+    <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;">
+      <div style="font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums;">28.4s</div>
+      <div style="font-size: 14px; color: #8b93a8;">buffered · 214.0 MB</div>
+    </div>
+    <div style="height: 6px; background: #0b0d15; border-radius: 3px; overflow: hidden;">
+      <div style="height: 100%; width: 95%; background: #3cc8b4;"></div>
+    </div>
+    <div style="display: flex; gap: 8px; margin-top: 14px;">
+      <div style="flex: 1; padding: 9px 12px; background: #3cc8b4; color: #06231f; border: 1px solid #3cc8b4; border-radius: 7px; font-weight: 600; text-align: center;">Save clip</div>
+      <div style="flex: 1; padding: 9px 12px; background: #1e2436; color: #e8ecf5; border: 1px solid #242a3d; border-radius: 7px; text-align: center;">Start recording</div>
+    </div>
+    <div style="margin: 10px 0 0; color: #8b93a8; font-size: 12px; line-height: 1.4;">Press Alt+F10 in game to save the last 30s.</div>
+  </div>
+
+  <div style="background: #161a27; border: 1px solid #242a3d; border-radius: 10px; padding: 14px; margin-bottom: 12px;">
+    <div style="font-size: 12px; margin: 0 0 10px; color: #8b93a8; text-transform: uppercase; letter-spacing: 0.1em;">Recorder overhead</div>
+    <div style="display: grid; grid-template-columns: 1fr auto; gap: 6px 12px;">
+      <sc-for list="{{overhead}}" as="r" hint-placeholder-count="4">
+        <div style="color: #8b93a8;">{{r.k}}</div>
+        <div style="text-align: right; font-variant-numeric: tabular-nums;">{{r.v}}</div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="background: #161a27; border: 1px solid #242a3d; border-radius: 10px; padding: 14px; margin-bottom: 12px;">
+    <div style="font-size: 12px; margin: 0 0 10px; color: #8b93a8; text-transform: uppercase; letter-spacing: 0.1em;">Capture health</div>
+    <div style="display: grid; grid-template-columns: 1fr auto; gap: 6px 12px;">
+      <sc-for list="{{healthRows}}" as="r" hint-placeholder-count="4">
+        <div style="color: #8b93a8;">{{r.k}}</div>
+        <div style="text-align: right; font-variant-numeric: tabular-nums;">{{r.v}}</div>
+      </sc-for>
+    </div>
+    <div style="margin: 10px 0 0; color: #8b93a8; font-size: 12px; line-height: 1.4;">Game FPS and frame time are measured out-of-process by the benchmark harness, not here — reading them honestly needs an ETW consumer, and a guessed number would be worse than none.</div>
+  </div>
+
+  <!-- Everything from here down is below the fold in a 720px window. -->
+  <div style="display: flex; align-items: center; gap: 10px; margin: 18px 0;">
+    <div style="flex: 1; border-top: 1px dashed #5a2630;"></div>
+    <div style="font-size: 11px; color: #ff4655; letter-spacing: 0.08em; text-transform: uppercase;">window ends here — 720px</div>
+    <div style="flex: 1; border-top: 1px dashed #5a2630;"></div>
+  </div>
+
+  <div style="background: #161a27; border: 1px solid #242a3d; border-radius: 10px; padding: 14px; margin-bottom: 12px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+      <div style="font-size: 12px; margin: 0; color: #8b93a8; text-transform: uppercase; letter-spacing: 0.1em;">Gallery</div>
+      <div style="display: flex; gap: 6px;">
+        <div style="padding: 5px 12px; font-size: 12px; background: #1e2436; border: 1px solid #3cc8b4; color: #3cc8b4; border-radius: 7px;">Clips</div>
+        <div style="padding: 5px 12px; font-size: 12px; background: #1e2436; border: 1px solid #242a3d; color: #e8ecf5; border-radius: 7px;">Recordings</div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <sc-for list="{{gallery}}" as="g" hint-placeholder-count="3">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 8px;">
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{g.name}}</div>
+            <div style="margin-top: 2px; color: #8b93a8; font-size: 12px;">{{g.meta}}</div>
+          </div>
+          <div style="flex: none; padding: 6px 10px; font-size: 12px; background: #1e2436; border: 1px solid #242a3d; border-radius: 7px;">Play</div>
+          <div style="flex: none; padding: 6px 10px; font-size: 12px; background: #1e2436; border: 1px solid #242a3d; border-radius: 7px;">Folder</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="background: #161a27; border: 1px solid #242a3d; border-radius: 10px; padding: 14px; margin-bottom: 12px;">
+    <div style="font-size: 12px; margin: 0 0 10px; color: #8b93a8; text-transform: uppercase; letter-spacing: 0.1em;">Settings</div>
+
+    <sc-for list="{{settingFields}}" as="f" hint-placeholder-count="3">
+      <div style="margin-bottom: 10px;">
+        <div style="font-size: 12px; color: #8b93a8; margin-bottom: 4px;">{{f.label}}</div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="flex: 1; min-width: 0; padding: 7px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 6px; font-size: 14px;">{{f.value}}</div>
+          <div style="color: #8b93a8; font-size: 14px; flex: none;">{{f.suffix}}</div>
+        </div>
+      </div>
+    </sc-for>
+
+    <div style="margin-bottom: 10px;">
+      <div style="font-size: 12px; color: #8b93a8; margin-bottom: 4px;">Audio tracks</div>
+      <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px;">
+        <div style="display: flex; align-items: center; gap: 7px; font-size: 13px;"><div style="width: 13px; height: 13px; border-radius: 3px; background: #3cc8b4;"></div> Desktop (game + comms)</div>
+        <div style="display: flex; align-items: center; gap: 7px; font-size: 13px;"><div style="width: 13px; height: 13px; border-radius: 3px; background: #3cc8b4;"></div> Microphone</div>
+      </div>
+      <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 6px;">
+        <sc-for list="{{audioRows}}" as="a" hint-placeholder-count="2">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="flex: none; width: 52px; font-size: 12px; color: #8b93a8;">{{a.name}}</div>
+            <div style="flex: 1; min-width: 0; padding: 7px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 6px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{a.device}}</div>
+            <div style="flex: none; width: 96px; height: 4px; background: #242a3d; border-radius: 2px; position: relative;">
+              <div style="position: absolute; left: {{a.pct}}; top: 50%; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; background: #3cc8b4; border-radius: 50%;"></div>
+            </div>
+            <div style="flex: none; width: 38px; text-align: right; font-size: 12px; color: #8b93a8; font-variant-numeric: tabular-nums;">{{a.val}}</div>
+          </div>
+        </sc-for>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="flex: none; width: 34px; padding: 6px 0; text-align: center; background: #1e2436; border: 1px solid #242a3d; border-radius: 7px; font-size: 15px; color: #8b93a8;">&#8635;</div>
+          <div style="display: flex; align-items: center; gap: 7px; font-size: 13px;"><div style="width: 13px; height: 13px; border-radius: 3px; border: 1px solid #242a3d;"></div> Combine into one track</div>
+        </div>
+      </div>
+      <div style="margin: 10px 0 0; color: #8b93a8; font-size: 12px; line-height: 1.4;">Separate tracks let a reviewer mute either side, and are the default. YouTube keeps only the first track, so combine them if you want your voice to survive an upload.</div>
+    </div>
+
+    <div style="margin-bottom: 10px;">
+      <div style="font-size: 12px; color: #8b93a8; margin-bottom: 4px;">Save-clip hotkey</div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="flex: 1; padding: 7px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 6px; font-size: 14px;">Alt+F10</div>
+        <div style="color: #8b93a8; font-size: 14px;">restart to apply</div>
+      </div>
+    </div>
+    <div style="margin-bottom: 10px;">
+      <div style="font-size: 12px; color: #8b93a8; margin-bottom: 4px;">Output folder</div>
+      <div style="padding: 7px 9px; background: #0b0d15; border: 1px solid #242a3d; border-radius: 6px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">C:\Users\babuo\Videos\DEBRIEF</div>
+    </div>
+    <div style="display: inline-block; padding: 9px 12px; background: #1e2436; border: 1px solid #242a3d; border-radius: 7px;">Save settings</div>
+  </div>
+
+  <div style="text-align: center; margin-top: 4px; color: #8b93a8; font-size: 12px;">Closing this window keeps DEBRIEF buffering in the tray.</div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview": {"width": 560, "height": 1580}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      overhead: [
+        { k: 'CPU', v: '0.51 %' },
+        { k: 'RAM', v: '87 MB' },
+        { k: 'VRAM', v: '340 MB of 5980' },
+        { k: 'Disk write', v: '14.2 MB/s' }
+      ],
+      healthRows: [
+        { k: 'Frames kept', v: '102,418' },
+        { k: 'Capture callback p99', v: '412 \u00b5s' },
+        { k: 'Dropped (ring full)', v: '0' },
+        { k: 'Dropped (target resized)', v: '0' }
+      ],
+      gallery: [
+        { name: 'Baboyie#EUW — clip-20260822-065107.mp4', meta: 'Sat, Aug 22, 06:51 · 0:30 · 1600×900 · 38.1 MB' },
+        { name: 'Baboyie#EUW — clip-20260822-065102.mp4', meta: 'Sat, Aug 22, 06:51 · 0:30 · 1600×900 · 38.9 MB' },
+        { name: 'clip-20260815-123534.mp4', meta: 'Fri, Aug 15, 12:35 · 0:30 · 1600×900 · 16.0 MB' }
+      ],
+      settingFields: [
+        { label: 'Replay window', value: '30', suffix: 'seconds' },
+        { label: 'Recording frame rate', value: '60', suffix: 'fps' },
+        { label: 'Bitrate', value: '0', suffix: 'Mbps — 0 = auto' },
+        { label: 'Record', value: 'Valorant', suffix: '' }
+      ],
+      audioRows: [
+        { name: 'Desktop', device: 'Default — Speakers (Realtek)', pct: '50%', val: '100%' },
+        { name: 'Mic', device: 'HyperX QuadCast S', pct: '35%', val: '70%' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
