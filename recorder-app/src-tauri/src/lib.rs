@@ -99,6 +99,59 @@ fn list_targets() -> serde_json::Value {
     })
 }
 
+/// Announce engine events: a chime, and the tray tooltip.
+///
+/// **There are no Windows toasts here, deliberately.** `tauri-plugin-notification`
+/// depends on `rand`, whose `zerocopy` build script Smart App Control refuses
+/// to execute on this machine — twelve fresh links, twelve refusals, unlike the
+/// app binary where relinking works. Toasts would also have been the *less*
+/// useful half: Windows silences notifications by itself while a game is
+/// fullscreen, which is exactly when a save needs confirming. The chime is what
+/// reaches you mid-round, and it needs nothing but winmm.
+///
+/// The tooltip is the tabbed-out half: hovering the tray icon says what last
+/// happened and when. Passive, free, and impossible to miss in the way a toast
+/// that was never shown is.
+fn present_notices(app: AppHandle, rx: std::sync::mpsc::Receiver<engine::Notice>) {
+    use engine::Notice;
+
+    let name = |p: &std::path::Path| {
+        p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()
+    };
+
+    for notice in rx {
+        // Read fresh each time, so toggling the setting takes effect on the
+        // next event rather than at the next restart.
+        let sound = app
+            .try_state::<AppState>()
+            .map(|s| s.config.lock().unwrap().notify_sound)
+            .unwrap_or(true);
+
+        let (line, cue): (String, fn()) = match &notice {
+            Notice::ClipSaved { path, ms } => (
+                format!("Clip saved — {} ({} ms)", name(path), ms.round()),
+                recorder_core::cue::saved as fn(),
+            ),
+            Notice::RecordingStarted => (
+                "Recording…".to_string(),
+                recorder_core::cue::marker as fn(),
+            ),
+            Notice::RecordingSaved { path, secs } => (
+                format!("Recording saved — {} ({:.0}s)", name(path), secs),
+                recorder_core::cue::marker as fn(),
+            ),
+            Notice::Failed { what } => (what.clone(), recorder_core::cue::failed as fn()),
+        };
+
+        if sound {
+            cue();
+        }
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_tooltip(Some(&format!("DEBRIEF — {line}")));
+        }
+    }
+}
+
 /* ---------------------------------------------------------------- setup */
 
 fn show_main_window(app: &AppHandle) {
@@ -291,6 +344,19 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // ---- notifications ----
+            // Driven from the engine, not from the UI polling status: this
+            // window spends its life hidden in the tray, and Chromium throttles
+            // timers in a hidden webview to as little as once a minute. A
+            // confirmation that lands a minute after the hotkey is not one.
+            if let Some(rx) = handle.state::<AppState>().engine.take_notices() {
+                let notify_handle = handle.clone();
+                std::thread::Builder::new()
+                    .name("debrief-notify".into())
+                    .spawn(move || present_notices(notify_handle, rx))
+                    .expect("failed to spawn notification thread");
+            }
 
             // ---- global hotkey ----
             // A hotkey that fails to register is worth surfacing: the user

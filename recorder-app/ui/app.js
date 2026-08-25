@@ -20,6 +20,7 @@ async function loadConfig() {
   el("capaudio").checked = cfg.capture_audio;
   el("capmic").checked = cfg.capture_mic;
   el("mixaudio").checked = cfg.mix_audio;
+  el("notifysound").checked = cfg.notify_sound;
   setGainUI("Desktop", cfg.desktop_gain);
   setGainUI("Mic", cfg.mic_gain);
   setHotkeyHint();
@@ -454,6 +455,7 @@ el("save").addEventListener("click", async () => {
     capture_audio: el("capaudio").checked,
     capture_mic: el("capmic").checked,
     mix_audio: el("mixaudio").checked,
+    notify_sound: el("notifysound").checked,
     desktop_gain: pctToGain(el("gainDesktop").value),
     mic_gain: pctToGain(el("gainMic").value),
     desktop_device: el("devDesktop").value,

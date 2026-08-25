@@ -162,17 +162,16 @@ asset protocol, whose scope would have to span wherever the user points
 `output_dir`). No thumbnails yet: generating one means decoding a frame per
 file, which is a Media Foundation source-reader job for later.
 
-**Notifications — buildable, but read this first.** `tauri-plugin-notification`
-makes start/stop/save toasts trivial. The catch is that Windows turns on Do Not
-Disturb automatically while a game is fullscreen, so the toast will *not* appear
-during play — which is exactly when "clip saved" is worth knowing. Options, none
-free:
-
-- Toasts anyway: useful when tabbed out, silent when it matters most.
-- An audible cue. Audible in game, but loopback captures it, so it lands in the
-  *next* clip's audio. A short quiet blip is probably an acceptable trade.
-- An overlay would work and is the one thing this project will not do — hooking
-  the game is what risks a Vanguard ban (ADR §1).
+**~~Notifications~~. Done 2026-08-25**, and the caveat turned out to be the
+whole story. Windows silences notifications while a game is fullscreen, so a
+toast cannot confirm the thing that most needs confirming. Shipped instead:
+a synthesised chime (`recorder-core/src/cue.rs`, winmm, no assets) which is the
+only feedback that reaches you mid-round, plus the tray tooltip for when you tab
+out. Toasts were dropped outright — `tauri-plugin-notification` depends on
+`rand` → `zerocopy`, whose build script Smart App Control refused twelve times
+across twelve fresh links. Real toasts would need WinRT with a registered
+AUMID shortcut, which needs no such dependency; worth doing only if the tooltip
+proves insufficient.
 
 **Adjustable audio tracks.** Needs scoping — see the open question below. Any
 per-sample gain is cheap to apply at capture, but §23 says keep audio processing

@@ -120,6 +120,19 @@ pub struct Config {
     /// Endpoint id for the microphone. Empty means the Windows default.
     pub mic_device: String,
 
+    /// Play a short chime when a clip is saved, a recording starts or stops,
+    /// or a save fails.
+    ///
+    /// The only confirmation that reaches you while a game is fullscreen:
+    /// Windows silences its own notifications there, and an overlay — which
+    /// would work — means hooking the game, the thing ADR §1 refuses. The tray
+    /// tooltip carries the same events for when you tab out.
+    ///
+    /// The cost, stated plainly: loopback records what the speakers play, so
+    /// the chime lands in the audio of whatever is recorded next. The clip just
+    /// saved is unaffected, since the ring holds what came before it.
+    pub notify_sound: bool,
+
     /// Who this machine's POV belongs to, for multi-POV review. Free text —
     /// a Riot `name#tag` is the obvious choice, but a team can use whatever
     /// they already call each other.
@@ -153,6 +166,7 @@ impl Default for Config {
             mic_gain: 1.0,
             desktop_device: String::new(),
             mic_device: String::new(),
+            notify_sound: true,
             player: String::new(),
         }
     }

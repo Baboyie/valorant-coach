@@ -26,6 +26,20 @@ use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITH
 
 use crate::config::Config;
 
+/// Something worth telling the user about, as it happens.
+///
+/// Sent on a channel rather than inferred by the UI from polled status: the
+/// window spends its life hidden in the tray, and Chromium throttles timers in
+/// a hidden webview to as little as once a minute. A confirmation that arrives
+/// a minute after the hotkey is not a confirmation.
+#[derive(Debug, Clone)]
+pub enum Notice {
+    ClipSaved { path: PathBuf, ms: f64 },
+    RecordingStarted,
+    RecordingSaved { path: PathBuf, secs: f64 },
+    Failed { what: String },
+}
+
 #[derive(Debug)]
 pub enum Cmd {
     /// Save the buffered window to a clip.
@@ -103,6 +117,9 @@ impl Default for Status {
 pub struct Engine {
     tx: Sender<Cmd>,
     status: Arc<Mutex<Status>>,
+    /// Taken once, by whoever will present the notices. An Option so a second
+    /// caller gets None rather than a silently competing consumer.
+    notices: Mutex<Option<Receiver<Notice>>>,
 }
 
 impl Engine {
@@ -110,11 +127,17 @@ impl Engine {
         let (tx, rx) = mpsc::channel();
         let status = Arc::new(Mutex::new(Status::default()));
         let thread_status = Arc::clone(&status);
+        let (notice_tx, notice_rx) = mpsc::channel();
         std::thread::Builder::new()
             .name("recorder-engine".into())
-            .spawn(move || run(config, rx, thread_status))
+            .spawn(move || run(config, rx, thread_status, notice_tx))
             .expect("failed to spawn recorder engine thread");
-        Engine { tx, status }
+        Engine { tx, status, notices: Mutex::new(Some(notice_rx)) }
+    }
+
+    /// Hand the notice stream to its one consumer.
+    pub fn take_notices(&self) -> Option<Receiver<Notice>> {
+        self.notices.lock().unwrap().take()
     }
 
     pub fn send(&self, cmd: Cmd) {
@@ -326,6 +349,7 @@ fn needs_session_restart(old: &Config, new: &Config) -> bool {
         mic_gain: _,      // pushed live
         desktop_device,
         mic_device,
+        notify_sound: _,  // read when an event fires, never held by a session
         player: _,        // only ever read when writing a sidecar
     } = new;
 
@@ -370,7 +394,12 @@ enum Session {
     },
 }
 
-fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
+fn run(
+    mut config: Config,
+    rx: Receiver<Cmd>,
+    status: Arc<Mutex<Status>>,
+    notices: Sender<Notice>,
+) {
     // MTA, and owned by this thread for its whole life: every stage of this
     // pipeline is free-threaded on purpose (ADR §3).
     unsafe {
@@ -410,10 +439,10 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
         // ---- commands -------------------------------------------------
         match rx.try_recv() {
             Ok(Cmd::Shutdown) | Err(TryRecvError::Disconnected) => {
-                teardown(&mut session, &status, &config);
+                teardown(&mut session, &status, &config, Some(&notices));
                 break;
             }
-            Ok(cmd) => handle_cmd(cmd, &mut session, &mut config, &status, &mut locked, &mut pending_record),
+            Ok(cmd) => handle_cmd(cmd, &mut session, &mut config, &status, &mut locked, &mut pending_record, &notices),
             Err(TryRecvError::Empty) => {}
         }
 
@@ -497,7 +526,7 @@ fn run(mut config: Config, rx: Receiver<Cmd>, status: Arc<Mutex<Status>>) {
                 // the moov atom.
                 Some(src) => {
                     if !src.alive() {
-                        teardown(&mut session, &status, &config);
+                        teardown(&mut session, &status, &config, Some(&notices));
                         locked = None;
                         let mut st = status.lock().unwrap();
                         st.game_running = false;
@@ -539,6 +568,7 @@ fn handle_cmd(
     status: &Arc<Mutex<Status>>,
     locked: &mut Option<capture::Source>,
     pending_record: &mut bool,
+    notices: &Sender<Notice>,
 ) {
     match cmd {
         Cmd::SaveClip => match session {
@@ -594,12 +624,20 @@ fn handle_cmd(
                             crate::vod::RecordingKind::Clip,
                             status,
                         );
+                        let _ = notices.send(Notice::ClipSaved {
+                            path: path.clone(),
+                            ms: r.elapsed_ms,
+                        });
                         let mut s = status.lock().unwrap();
                         s.last_clip = Some(path.to_string_lossy().to_string());
                         s.last_save_ms = Some(r.elapsed_ms);
                         s.last_error = None;
                     }
-                    Err(e) => set_error(status, &format!("save failed: {e}")),
+                    Err(e) => {
+                        let what = format!("save failed: {e}");
+                        let _ = notices.send(Notice::Failed { what: what.clone() });
+                        set_error(status, &what);
+                    }
                 }
             }
             Session::Recording { .. } => {
@@ -642,12 +680,13 @@ fn handle_cmd(
             }
             // Drop the buffering session first: one capture session per target,
             // and v1 does not run two encoders at once.
-            teardown(session, status, config);
+            teardown(session, status, config, Some(notices));
             match start_recording(src, config) {
                 Ok(new) => {
                     *session = new;
                     *locked = Some(src);
                     *pending_record = false;
+                    let _ = notices.send(Notice::RecordingStarted);
                     let mut st = status.lock().unwrap();
                     st.target_title = src.label();
                     st.pending = None;
@@ -664,7 +703,7 @@ fn handle_cmd(
             *pending_record = false;
             status.lock().unwrap().pending = None;
             if let Session::Recording { .. } = session {
-                teardown(session, status, config);
+                teardown(session, status, config, Some(notices));
                 *locked = None;
             }
         }
@@ -689,7 +728,7 @@ fn handle_cmd(
             // restarts buffering on the next tick. The lock is cleared so a
             // target-mode change starts from a clean slate rather than
             // resuming on whatever the previous mode had chosen.
-            teardown(session, status, config);
+            teardown(session, status, config, Some(notices));
             *locked = None;
             *pending_record = false;
             status.lock().unwrap().pending = None;
@@ -934,7 +973,12 @@ fn pump(session: &mut Session, status: &Arc<Mutex<Status>>) -> bool {
     }
 }
 
-fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>, config: &Config) {
+fn teardown(
+    session: &mut Session,
+    status: &Arc<Mutex<Status>>,
+    config: &Config,
+    notices: Option<&Sender<Notice>>,
+) {
     let old = std::mem::replace(session, Session::None);
     match old {
         Session::None => {}
@@ -982,6 +1026,12 @@ fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>, config: &Config)
                 crate::vod::RecordingKind::Recording,
                 status,
             );
+            if let Some(n) = notices {
+                let _ = n.send(Notice::RecordingSaved {
+                    path: path.clone(),
+                    secs: started.elapsed().as_secs_f64(),
+                });
+            }
             let mut s = status.lock().unwrap();
             s.last_clip = Some(path.to_string_lossy().to_string());
             s.recording_path = None;

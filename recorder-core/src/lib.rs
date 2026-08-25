@@ -14,6 +14,7 @@
 
 pub mod audio;
 pub mod capture;
+pub mod cue;
 pub mod d3d;
 pub mod encoder;
 pub mod encoders;

@@ -72,6 +72,7 @@ restart.
 | `auto_buffer` | start buffering as soon as the target appears |
 | `target` | what to record: `{"kind":"valorant"}` (default), a whole screen `{"kind":"monitor","device":"\\.\DISPLAY1"}`, or one window `{"kind":"window","title":"...","class":"..."}`. The UI fills this from a Discord-style picker; saved by identity, not handle, so it survives restarts. A window target follows the *window*, not the title — a browser retitling itself on a tab switch does not end the session. §29 performance numbers are only measured for Valorant; a 1440p/4K monitor is more pixels than a 1080p game window and encodes accordingly |
 | `capture_audio` | record desktop audio via WASAPI loopback (default on) — what the player hears, game and comms together |
+| `notify_sound` | chime on save, recording start/stop and failure (default on). The only confirmation that reaches you in game — Windows silences its own notifications while a game is fullscreen. Loopback records it, so it can be heard in the *next* thing recorded, never in the clip just saved |
 | `capture_mic` | record the microphone as a **separate track** (default off), so a reviewer can isolate or mute the player's own voice. Off by default because many machines have no usable microphone, and a silent extra track is worse than none |
 
 Audio tracks stay **separate rather than mixed** (§23). That is also the lighter
@@ -163,7 +164,19 @@ way back, since the previous artifact in `deps/` is replaced too. Copy a known
 good `recorder-app.exe` aside before rebuilding — `D:\dev\vc-known-good` on this
 rig — so a bad verdict costs a retry rather than the evening.
 
-**The working workaround: relink and retry.** Verdicts attach to the file, so a
+**It also blocks build scripts and proc-macro DLLs, and there retrying does
+not help.** `cargo check` (the debug profile) currently cannot run at all here:
+freshly linked proc-macro DLLs are refused with `os error 4551`, so validate
+with `cargo build --release` instead. Worse, a *new* dependency can be
+unbuildable outright — `tauri-plugin-notification` pulls `rand` → `zerocopy`,
+whose build script was refused twelve times across twelve fresh links. That is
+why notifications are a chime and a tray tooltip rather than Windows toasts.
+A half-built tree also leaves fingerprints claiming success, so cargo will
+happily hand rustc `--extern` paths to artifacts that no longer exist; the
+symptom is `can't find crate for tauri` with no attempt to rebuild it, and the
+fix is `cargo clean --release` and a full rebuild.
+
+**The working workaround for the app binary: relink and retry.** Verdicts attach to the file, so a
 fresh link is a fresh verdict — `touch src/main.rs && cargo build --release`
 and launch again. Twice now a blocked binary was followed by an allowed one
 with SAC unchanged in between. Combined with keeping a known-good copy in
