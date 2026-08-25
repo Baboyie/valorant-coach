@@ -35,9 +35,10 @@ fn main() -> Result<()> {
         "record" => cmd_record(),
         "replay" => cmd_replay(),
         "audio" => cmd_audio(),
+        "fixtracks" => cmd_fixtracks(),
         other => {
             eprintln!(
-                "unknown command: {other}\n\nusage: recorder-proto [probe|capture|record|replay|audio]"
+                "unknown command: {other}\n\nusage: recorder-proto [probe|capture|record|replay|audio|fixtracks]"
             );
             Ok(())
         }
@@ -375,6 +376,58 @@ fn cmd_record() -> Result<()> {
 /// matters here is **peak level** — packet counts prove the plumbing runs,
 /// but only a non-zero peak proves we are capturing what the speakers are
 /// playing rather than a well-formed stream of silence.
+/// Repair the container of clips recorded before audio tracks were marked as
+/// alternates.
+///
+/// Two enabled audio tracks left every player to guess which to play — the
+/// in-app gallery chose desktop, Windows chose the microphone. New saves are
+/// written correctly; this is for the ones already on disk. Rewrites a handful
+/// of bytes in place, changes no file size, and is safe to run twice.
+///
+///   recorder-proto fixtracks <file-or-directory>...
+fn cmd_fixtracks() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    if args.is_empty() {
+        println!("usage: recorder-proto fixtracks <file-or-directory>...");
+        return Ok(());
+    }
+
+    fn visit(path: &std::path::Path, fixed: &mut u32, seen: &mut u32) {
+        if path.is_dir() {
+            if let Ok(rd) = std::fs::read_dir(path) {
+                for e in rd.flatten() {
+                    visit(&e.path(), fixed, seen);
+                }
+            }
+            return;
+        }
+        let is_mp4 = path
+            .extension()
+            .map(|x| x.eq_ignore_ascii_case("mp4"))
+            .unwrap_or(false);
+        if !is_mp4 {
+            return;
+        }
+        *seen += 1;
+        match recorder_core::mp4::mark_audio_alternates(path) {
+            Ok(true) => {
+                *fixed += 1;
+                println!("  fixed     {}", path.display());
+            }
+            Ok(false) => println!("  unchanged {}", path.display()),
+            Err(e) => println!("  FAILED    {}: {e}", path.display()),
+        }
+    }
+
+    let (mut fixed, mut seen) = (0, 0);
+    for a in &args {
+        visit(std::path::Path::new(a), &mut fixed, &mut seen);
+    }
+    println!();
+    println!("{seen} file(s) examined, {fixed} changed");
+    Ok(())
+}
+
 fn cmd_audio() -> Result<()> {
     let secs: u64 = arg(2).and_then(|s| s.parse().ok()).unwrap_or(10);
     let source = match arg(3).as_deref() {

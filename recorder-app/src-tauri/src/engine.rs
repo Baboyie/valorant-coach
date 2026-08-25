@@ -570,6 +570,14 @@ fn handle_cmd(
                         .collect();
                 match ring.save_mp4(&path.to_string_lossy(), cfg, &audio_types) {
                     Ok(r) => {
+                        // Two enabled audio tracks make every player guess
+                        // differently — the gallery played desktop while
+                        // Windows played nothing but the mic. Say which one is
+                        // meant. Never fatal: a clip with an ambiguous
+                        // container still holds the footage.
+                        if let Err(e) = recorder_core::mp4::mark_audio_alternates(&path) {
+                            eprintln!("could not mark audio tracks in {}: {e}", path.display());
+                        }
                         // A clip's start is derived, not observed: the ring
                         // holds the window *ending* now, so the footage began
                         // `span_secs` ago. Getting this wrong would shift this
@@ -958,6 +966,10 @@ fn teardown(session: &mut Session, status: &Arc<Mutex<Status>>, config: &Config)
             // looks like an encoder bug rather than an interrupted recording.
             if let Err(e) = enc.finish() {
                 set_error(status, &format!("finalising recording failed: {e}"));
+            }
+            // Same disambiguation as the clip path, once the moov exists.
+            if let Err(e) = recorder_core::mp4::mark_audio_alternates(&path) {
+                eprintln!("could not mark audio tracks in {}: {e}", path.display());
             }
             // Sidecar after finish(), so the byte count is the finished file's.
             write_sidecar(
