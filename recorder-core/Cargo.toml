@@ -2,6 +2,7 @@
 name = "recorder-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Capture (WGC) -> hardware encode (MF/NVENC) -> file or replay ring. The measured pipeline from ADR-001, as a library."
 publish = false
 

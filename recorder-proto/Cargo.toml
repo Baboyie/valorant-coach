@@ -2,6 +2,7 @@
 name = "recorder-proto"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Headless CLI over recorder-core: probe/capture/record/replay. The benchmark instrument ADR-001 §5 references."
 publish = false
 

@@ -1,0 +1,96 @@
+# Build the installer teammates install.
+#
+# **This workflow is also the thing that makes code signing possible.** The free
+# route — SignPath Foundation — signs artifacts produced by a trusted, automated
+# build, not binaries from a developer's machine: a signature is supposed to say
+# "this came from that source", which only a build nobody can reach into can
+# claim. So the installer has to be built here before it can be signed anywhere.
+# See the commented block at the end for where the signing step goes once a
+# SignPath project exists.
+#
+# Until then the artifact is unsigned, and Windows will say so: SmartScreen
+# warns, and a machine with Smart App Control enforcing refuses it outright.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# The release step needs to create a release and upload to it.
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      # No npm step: the app's UI is plain HTML, CSS and JavaScript with no
+      # build, so `frontendDist` points straight at the folder.
+      - name: Build the installer
+        uses: tauri-apps/tauri-action@v0
+        id: tauri
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: recorder-app
+          # A tag build publishes a draft release; a manual run just leaves the
+          # artifact below, so the button is safe to press for a test build.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: DEBRIEF ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          releaseBody: |
+            Unsigned build. Windows will show a SmartScreen warning — More info,
+            then Run anyway. A machine with Smart App Control enforcing will
+            refuse it outright; that is what signing fixes.
+
+            Installs per-user to %LOCALAPPDATA%, so it needs no administrator.
+
+      # Kept regardless of whether a release was made, so a manual run still
+      # produces something to hand to someone.
+      - name: Keep the installer
+        id: keep
+        uses: actions/upload-artifact@v4
+        with:
+          name: DEBRIEF-setup
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      # ---------------------------------------------------------------------
+      # Signing, once SignPath approves the project.
+      #
+      # SignPath Foundation is free for open source, and requires:
+      #   - a public repository under an OSI-approved licence, no commercial
+      #     dual-licensing (this repo is MIT — see LICENSE),
+      #   - the artifact built by this workflow rather than locally,
+      #   - an existing release and active maintenance.
+      #
+      # Apply at https://signpath.org/apply. Once the project exists, add
+      # SIGNPATH_API_TOKEN as a repository secret, fill in the three ids below,
+      # and move the upload-artifact step above this one — the action signs an
+      # artifact that has already been uploaded, and writes the signed copy
+      # back.
+      #
+      # - name: Sign the installer
+      #   uses: signpath/github-action-submit-signing-request@v1
+      #   with:
+      #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+      #     organization-id: "<from SignPath>"
+      #     project-slug: "debrief"
+      #     signing-policy-slug: "release-signing"
+      #     github-artifact-id: ${{ steps.keep.outputs.artifact-id }}
+      #     wait-for-completion: true
+      #     output-artifact-directory: signed
+      # ---------------------------------------------------------------------

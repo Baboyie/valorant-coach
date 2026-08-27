@@ -1,0 +1,51 @@
+# Tests, on every push and pull request.
+#
+# Deliberately does not build the desktop app: compiling Tauri takes ten-odd
+# minutes on a Windows runner, and Windows minutes bill at ten times the Linux
+# rate on a private repository. The release workflow builds it when there is
+# something to release. What runs here is everything with logic in it that a
+# machine with no GPU, no display and no audio hardware can judge.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  node:
+    name: review server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Session cookies, path traversal, YouTube link parsing, and a full
+      # round-trip through the filesystem storage backend. The Postgres backend
+      # runs against real Postgres compiled to WebAssembly, so it needs no
+      # service container.
+      - run: npm test
+
+  rust:
+    name: recorder core
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      # --lib only. The integration tests in recorder-core/tests enumerate real
+      # monitors and windows, which is a fair thing to assert on a desktop and
+      # meaningless on a headless runner. The library tests — audio mixing and
+      # resampling, MP4 track flags, the confirmation chime — are pure
+      # arithmetic and belong here.
+      - run: cargo test -p recorder-core --lib
+      # Catches a broken manifest or a syntax error in the app without paying
+      # for a full optimised build.
+      - run: cargo check --workspace
