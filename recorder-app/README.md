@@ -106,6 +106,31 @@ A test affordance, not a feature: the engine is otherwise only ever willing to
 record the game, which makes the clip and audio paths unverifiable whenever it
 is not running.
 
+## Making an installer for teammates
+
+```bash
+cargo install tauri-cli --version "^2" --locked --target-dir D:/dev/cli-build
+cargo tauri build          # from recorder-app/src-tauri
+```
+
+Produces `D:/dev/vc-target/release/bundle/nsis/DEBRIEF_<version>_x64-setup.exe`,
+about 2 MB. The `--target-dir` on the install matters: `cargo install` builds in
+a temp directory on `C:`, where Smart App Control blocked a build script; the
+same install succeeded first try building on `D:`.
+
+**NSIS only, and a per-user install.** MSI was dropped: it needs admin, so an
+unsigned build greets the user with a UAC dialog naming an unknown publisher.
+NSIS in `currentUser` mode installs to `%LOCALAPPDATA%` with no elevation at
+all, which is a gentler first run for something unsigned. WebView2 is fetched
+by a bootstrapper if the machine lacks it.
+
+**It is unsigned**, so expect the SmartScreen warning — More info, then Run
+anyway. On a machine with Smart App Control *enforcing* it is refused outright
+with no click-through; SAC is on by default only on clean Windows 11 installs,
+so try one teammate before assuming it is a problem. Signing is the fix, and
+the free route (SignPath Foundation) requires the repository to be public under
+an OSI-approved licence, with the artifact built by CI rather than locally.
+
 ## Where the build output goes
 
 The checkout used to live in OneDrive and no longer does — it is on `D:`, and
