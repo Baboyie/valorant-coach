@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use engine::{Cmd, Engine, Status};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 struct AppState {
@@ -88,6 +88,37 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// The overlay card asks to be dismissed once its slide-out has finished.
+/// Hiding from the page rather than on a Rust timer keeps the timing next to
+/// the animation that has to agree with it.
+#[tauri::command]
+fn hide_toast(app: AppHandle) {
+    if let Some(w) = app.get_webview_window(TOAST_WINDOW) {
+        let _ = w.hide();
+    }
+}
+
+/// Show a sample card, so the popup can be seen and placed without waiting for
+/// a real save — and so "is it working?" has an answer that does not require
+/// being mid-match.
+#[tauri::command]
+fn preview_toast(app: AppHandle) {
+    let Some(w) = app.get_webview_window(TOAST_WINDOW) else { return };
+    place_toast(&w);
+    let _ = w.emit_to(
+        TOAST_WINDOW,
+        "debrief://notice",
+        serde_json::json!({
+            "kind": "saved",
+            "title": "Clip saved",
+            "body": "clip-20260101-120000.mp4 · 52 ms",
+            "ms": TOAST_MS,
+        }),
+    );
+    show_toast_window(&w);
+    let _ = w.set_always_on_top(true);
+}
+
 /// Everything a person could choose to record, for the picker. Enumerated on
 /// demand rather than cached: windows come and go, and a stale list is how
 /// someone records the wrong thing.
@@ -99,19 +130,123 @@ fn list_targets() -> serde_json::Value {
     })
 }
 
-/// Announce engine events: a chime, and the tray tooltip.
+const TOAST_WINDOW: &str = "toast";
+/// Card size in logical pixels, matched to `ui/toast.html`.
+const TOAST_W: f64 = 340.0;
+const TOAST_H: f64 = 76.0;
+/// Distance from the working area's corner.
+const TOAST_MARGIN: f64 = 18.0;
+/// How long a card stays up. Long enough to read a filename mid-round,
+/// short enough not to sit over the game.
+const TOAST_MS: u32 = 3600;
+
+/// Build the overlay window, hidden, ready to be shown on the first event.
 ///
-/// **There are no Windows toasts here, deliberately.** `tauri-plugin-notification`
-/// depends on `rand`, whose `zerocopy` build script Smart App Control refuses
-/// to execute on this machine — twelve fresh links, twelve refusals, unlike the
-/// app binary where relinking works. Toasts would also have been the *less*
-/// useful half: Windows silences notifications by itself while a game is
-/// fullscreen, which is exactly when a save needs confirming. The chime is what
-/// reaches you mid-round, and it needs nothing but winmm.
+/// **This is a window, not a hook.** ShadowPlay and Medal draw inside the
+/// game's own swap chain, which means injecting into the game process — the
+/// thing ADR §1 refuses, because it is what an anti-cheat cannot tell apart
+/// from a cheat. An always-on-top, click-through, unfocusable window of our own
+/// touches nothing of the game's, and the compositor puts it on top.
 ///
-/// The tooltip is the tabbed-out half: hovering the tray icon says what last
-/// happened and when. Passive, free, and impossible to miss in the way a toast
-/// that was never shown is.
+/// The price of not hooking: the compositor can only do that for a game running
+/// **borderless**. A game in true exclusive fullscreen owns the display outright
+/// and nothing short of a hook draws over it, so there the card simply does not
+/// appear — which is why the chime exists and is not merely a duplicate.
+fn build_toast_window(app: &AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window(TOAST_WINDOW).is_some() {
+        return Ok(());
+    }
+    let w = WebviewWindowBuilder::new(app, TOAST_WINDOW, WebviewUrl::App("toast.html".into()))
+        .title("DEBRIEF notice")
+        .inner_size(TOAST_W, TOAST_H)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        // Never take focus. Stealing it from a game mid-round would be worse
+        // than showing nothing at all.
+        .focused(false)
+        .visible(false)
+        .build()?;
+    // Clicks pass straight through to whatever is underneath, so the card can
+    // never swallow a shot.
+    let _ = w.set_ignore_cursor_events(true);
+
+    // WS_EX_NOACTIVATE, which Tauri does not expose. Without it, showing the
+    // card can take focus — and pulling focus out of a game mid-round would be
+    // far worse than showing nothing at all. Building with .focused(false)
+    // governs only the initial build; this governs every later show.
+    #[cfg(windows)]
+    if let Ok(h) = w.hwnd() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+        };
+        // Tauri carries its own copy of the windows crate, so its HWND is a
+        // different type to ours despite being the same handle. Rebuild it from
+        // the raw pointer rather than adding a second windows version.
+        let hwnd = windows::Win32::Foundation::HWND(h.0 as *mut _);
+        unsafe {
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as isize);
+        }
+    }
+    Ok(())
+}
+
+/// Show the card without activating it.
+///
+/// Tauri's show() goes through ShowWindow(SW_SHOW), which activates.
+/// SW_SHOWNOACTIVATE says what is actually meant, and does not depend on the
+/// WS_EX_NOACTIVATE style having stuck.
+fn show_toast_window(w: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    {
+        if let Ok(h) = w.hwnd() {
+            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+            let hwnd = windows::Win32::Foundation::HWND(h.0 as *mut _);
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+            return;
+        }
+    }
+    let _ = w.show();
+}
+
+/// Put the card in the bottom-right of the work area of the monitor it is on.
+///
+/// The *work area* rather than the full monitor, so it sits above the taskbar
+/// on a desktop; over a fullscreen game the two are the same rectangle.
+fn place_toast(w: &tauri::WebviewWindow) {
+    let Ok(Some(mon)) = w.current_monitor() else { return };
+    let scale = mon.scale_factor();
+    // The work area, not the whole monitor: on a desktop that keeps the card
+    // clear of the taskbar instead of half behind it. Over a fullscreen game
+    // the taskbar is gone and the two rectangles are the same.
+    let area = mon.work_area();
+    let origin = area.position.to_logical::<f64>(scale);
+    let size = area.size.to_logical::<f64>(scale);
+    let _ = w.set_position(tauri::LogicalPosition::new(
+        origin.x + size.width - TOAST_W - TOAST_MARGIN,
+        origin.y + size.height - TOAST_H - TOAST_MARGIN,
+    ));
+}
+
+/// Announce engine events three ways: an on-screen card, a chime, and the tray
+/// tooltip. Each covers a case the others cannot.
+///
+/// The **card** is the Medal/ShadowPlay-style popup, and works whenever the game
+/// is borderless. The **chime** is what gets through in true exclusive
+/// fullscreen, where nothing but a hook can draw over the picture. The
+/// **tooltip** is for tabbing out later and asking what happened.
+///
+/// Windows toasts are deliberately absent: `tauri-plugin-notification` depends
+/// on `rand`, whose `zerocopy` build script Smart App Control refuses to
+/// execute on this machine — twelve fresh links, twelve refusals. They would
+/// also have been the least useful of the four, since Windows silences its own
+/// notifications while a game is fullscreen.
 fn present_notices(app: AppHandle, rx: std::sync::mpsc::Receiver<engine::Notice>) {
     use engine::Notice;
 
@@ -120,34 +255,75 @@ fn present_notices(app: AppHandle, rx: std::sync::mpsc::Receiver<engine::Notice>
     };
 
     for notice in rx {
-        // Read fresh each time, so toggling the setting takes effect on the
-        // next event rather than at the next restart.
-        let sound = app
-            .try_state::<AppState>()
-            .map(|s| s.config.lock().unwrap().notify_sound)
-            .unwrap_or(true);
+        // Read fresh each time, so toggling a setting takes effect on the next
+        // event rather than at the next restart.
+        let (sound, toast) = match app.try_state::<AppState>() {
+            Some(state) => {
+                let c = state.config.lock().unwrap();
+                (c.notify_sound, c.notify_toast)
+            }
+            None => (true, true),
+        };
 
-        let (line, cue): (String, fn()) = match &notice {
+        let (kind, title, body, cue): (&str, &str, String, fn()) = match &notice {
             Notice::ClipSaved { path, ms } => (
-                format!("Clip saved — {} ({} ms)", name(path), ms.round()),
+                "saved",
+                "Clip saved",
+                format!("{} · {} ms", name(path), ms.round()),
                 recorder_core::cue::saved as fn(),
             ),
             Notice::RecordingStarted => (
-                "Recording…".to_string(),
+                "recording",
+                "Recording",
+                "Started — press stop in DEBRIEF when done.".to_string(),
                 recorder_core::cue::marker as fn(),
             ),
             Notice::RecordingSaved { path, secs } => (
-                format!("Recording saved — {} ({:.0}s)", name(path), secs),
+                "saved",
+                "Recording saved",
+                format!("{} · {:.0}s", name(path), secs),
                 recorder_core::cue::marker as fn(),
             ),
-            Notice::Failed { what } => (what.clone(), recorder_core::cue::failed as fn()),
+            Notice::Failed { what } => (
+                "failed",
+                "DEBRIEF",
+                what.clone(),
+                recorder_core::cue::failed as fn(),
+            ),
         };
 
+        // The chime first: it is the half that reaches someone mid-round, and
+        // building a window should not delay it.
         if sound {
             cue();
         }
+
+        if toast {
+            if let Some(w) = app.get_webview_window(TOAST_WINDOW) {
+                // Re-placed on every notice: the card should follow the monitor
+                // the user is actually on, and that can change between saves.
+                place_toast(&w);
+                let _ = w.emit_to(
+                    TOAST_WINDOW,
+                    "debrief://notice",
+                    serde_json::json!({
+                        "kind": kind,
+                        "title": title,
+                        "body": body,
+                        "ms": TOAST_MS,
+                    }),
+                );
+                // Shown after the payload, so the card never appears blank for a
+                // frame before its text arrives.
+                show_toast_window(&w);
+                // Re-assert topmost: a game that has taken the top spot since
+                // the last notice would otherwise cover the card.
+                let _ = w.set_always_on_top(true);
+            }
+        }
+
         if let Some(tray) = app.tray_by_id("main") {
-            let _ = tray.set_tooltip(Some(&format!("DEBRIEF — {line}")));
+            let _ = tray.set_tooltip(Some(&format!("DEBRIEF — {title}: {body}")));
         }
     }
 }
@@ -299,6 +475,8 @@ pub fn run() {
             list_targets,
             list_media,
             list_audio_devices,
+            hide_toast,
+            preview_toast,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -344,6 +522,14 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // ---- overlay card ----
+            // Built up front and kept hidden: creating a webview window takes
+            // long enough that doing it on the first save would delay the
+            // confirmation it exists to deliver.
+            if let Err(e) = build_toast_window(&handle) {
+                eprintln!("could not create the notice overlay: {e}");
+            }
 
             // ---- notifications ----
             // Driven from the engine, not from the UI polling status: this

@@ -132,6 +132,18 @@ pub struct Config {
     /// the chime lands in the audio of whatever is recorded next. The clip just
     /// saved is unaffected, since the ring holds what came before it.
     pub notify_sound: bool,
+    /// Show a small overlay card in the corner of the screen — the thing Medal
+    /// and ShadowPlay do.
+    ///
+    /// It is an ordinary always-on-top, click-through window of our own, not a
+    /// hook into the game: nothing is injected and nothing draws inside the
+    /// game process, which is what keeps it on the right side of ADR §1.
+    ///
+    /// The limit that follows from that: a window can only sit above a game
+    /// running **borderless**. In true exclusive fullscreen — which Valorant
+    /// uses at non-native resolutions — nothing but a hook can draw over it,
+    /// so the card will not appear and the chime is the confirmation.
+    pub notify_toast: bool,
 
     /// Who this machine's POV belongs to, for multi-POV review. Free text —
     /// a Riot `name#tag` is the obvious choice, but a team can use whatever
@@ -167,6 +179,7 @@ impl Default for Config {
             desktop_device: String::new(),
             mic_device: String::new(),
             notify_sound: true,
+            notify_toast: true,
             player: String::new(),
         }
     }

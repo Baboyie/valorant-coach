@@ -350,6 +350,7 @@ fn needs_session_restart(old: &Config, new: &Config) -> bool {
         desktop_device,
         mic_device,
         notify_sound: _,  // read when an event fires, never held by a session
+        notify_toast: _,
         player: _,        // only ever read when writing a sidecar
     } = new;
 

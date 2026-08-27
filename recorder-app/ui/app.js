@@ -21,6 +21,7 @@ async function loadConfig() {
   el("capmic").checked = cfg.capture_mic;
   el("mixaudio").checked = cfg.mix_audio;
   el("notifysound").checked = cfg.notify_sound;
+  el("notifytoast").checked = cfg.notify_toast;
   setGainUI("Desktop", cfg.desktop_gain);
   setGainUI("Mic", cfg.mic_gain);
   setHotkeyHint();
@@ -310,6 +311,7 @@ for (const id of ["capaudio", "capmic"]) {
   el(id).addEventListener("change", syncAudioEnabled);
 }
 el("refreshDevices").addEventListener("click", refreshDevices);
+el("previewToast").addEventListener("click", () => invoke("preview_toast"));
 
 /* --------------------------------------------------------------- gallery */
 
@@ -456,6 +458,7 @@ el("save").addEventListener("click", async () => {
     capture_mic: el("capmic").checked,
     mix_audio: el("mixaudio").checked,
     notify_sound: el("notifysound").checked,
+    notify_toast: el("notifytoast").checked,
     desktop_gain: pctToGain(el("gainDesktop").value),
     mic_gain: pctToGain(el("gainMic").value),
     desktop_device: el("devDesktop").value,
