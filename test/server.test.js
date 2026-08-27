@@ -29,7 +29,7 @@ test.after(() => fsp.rm(process.env.DEBRIEF_DATA_DIR, { recursive: true, force: 
 const asReq = (cookie) => ({
   headers: { cookie: cookie == null ? undefined : `${auth.SESSION_COOKIE}=${encodeURIComponent(cookie)}` },
 });
-const USER = { sub: '1', email: 'babu.ochir@gmail.com', name: 'Babu', picture: null };
+const USER = { sub: '1', email: 'player@example.com', name: 'Babu', picture: null };
 
 test('a session cookie round-trips', () => {
   const s = auth.getSession(asReq(auth.newSession(USER)));
