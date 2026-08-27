@@ -338,6 +338,139 @@ async function loadMedia() {
   renderMedia();
 }
 
+// Decoded frames, keyed by path. Kept for the session rather than written to
+// disk: one frame costs a couple of range requests through the media: scheme,
+// and a cache on disk would be another thing to invalidate when a file changes.
+const thumbs = new Map();
+// One at a time. Decoding several videos at once competes with the encoder for
+// the same GPU, and §2 is explicit that nothing here may do that.
+let thumbQueue = Promise.resolve();
+
+/**
+ * Grab a frame from a video by playing it, invisibly, to one position.
+ *
+ * Done in the webview rather than in Rust because the decoder is already here
+ * and already reaches these files through the media: scheme. A Media Foundation
+ * source reader plus an image encoder would be a few hundred lines to arrive at
+ * the same JPEG.
+ */
+function thumbFor(m) {
+  if (thumbs.has(m.path)) return Promise.resolve(thumbs.get(m.path));
+  const job = () =>
+    new Promise((resolve) => {
+      const v = document.createElement("video");
+      v.muted = true;
+      v.preload = "metadata";
+      let done = false;
+      const finish = (val) => {
+        if (done) return;
+        done = true;
+        thumbs.set(m.path, val);
+        v.removeAttribute("src");
+        v.load();
+        resolve(val);
+      };
+      // A file that will not decode must not hang the queue behind it.
+      const bail = setTimeout(() => finish(null), 6000);
+      v.addEventListener("loadeddata", () => {
+        // A tenth of the way in: frame zero of a clip is often the tail of a
+        // loading screen or a fade, which says nothing about the round.
+        const at = Math.min(Math.max((v.duration || 0) * 0.1, 0.1), 8);
+        v.currentTime = isFinite(at) ? at : 0.1;
+      });
+      v.addEventListener("seeked", () => {
+        try {
+          const c = document.createElement("canvas");
+          const w = 136; // twice the CSS box, so it stays sharp on a HiDPI panel
+          c.width = w;
+          c.height = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * w)) || 77;
+          c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+          clearTimeout(bail);
+          finish(c.toDataURL("image/jpeg", 0.72));
+        } catch {
+          clearTimeout(bail);
+          finish(null);
+        }
+      });
+      v.addEventListener("error", () => {
+        clearTimeout(bail);
+        finish(null);
+      });
+      v.src = mediaSrc(m.path);
+    });
+  thumbQueue = thumbQueue.then(job, job);
+  return thumbQueue;
+}
+
+async function deleteMedia(m, li) {
+  try {
+    await invoke("delete_media", { path: m.path });
+    thumbs.delete(m.path);
+    el("mediaErr").classList.add("hidden");
+    await loadMedia();
+  } catch (e) {
+    li.classList.remove("confirming");
+    const err = el("mediaErr");
+    err.textContent = String(e);
+    err.classList.remove("hidden");
+  }
+}
+
+/** Swap a row's buttons for "Delete? · Delete / Cancel", in place. */
+function askToDelete(m, li, actions) {
+  li.classList.add("confirming");
+  const saved = actions.innerHTML;
+  actions.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "confirm";
+
+  const label = document.createElement("span");
+  label.textContent = "Delete?";
+
+  const yes = document.createElement("button");
+  yes.className = "danger";
+  yes.textContent = "Delete";
+  yes.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteMedia(m, li);
+  });
+
+  const no = document.createElement("button");
+  no.textContent = "Cancel";
+  const cancel = (e) => {
+    if (e) e.stopPropagation();
+    li.classList.remove("confirming");
+    actions.innerHTML = saved;
+    wireActions(m, li, actions);
+  };
+  no.addEventListener("click", cancel);
+
+  wrap.append(label, yes, no);
+  actions.appendChild(wrap);
+}
+
+function wireActions(m, li, actions) {
+  const [del, folder] = actions.querySelectorAll("button");
+  if (del) {
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      askToDelete(m, li, actions);
+    });
+  }
+  if (folder) {
+    folder.addEventListener("click", (e) => {
+      e.stopPropagation();
+      invoke("reveal_in_explorer", { path: m.path });
+    });
+  }
+}
+
+const ICON_TRASH =
+  '<svg viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>';
+const ICON_FOLDER =
+  '<svg viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"></path></svg>';
+const ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>';
+
 function renderMedia() {
   const list = el("mediaList");
   list.innerHTML = "";
@@ -355,7 +488,23 @@ function renderMedia() {
 
     const thumb = document.createElement("div");
     thumb.className = "thumb";
-    thumb.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>';
+    thumb.innerHTML = ICON_PLAY;
+    const img = document.createElement("img");
+    img.alt = "";
+    thumb.appendChild(img);
+    if (m.duration_secs != null) {
+      const d = document.createElement("span");
+      d.className = "dur";
+      d.textContent = fmtDur(m.duration_secs);
+      thumb.appendChild(d);
+    }
+    // Decoded lazily and in order, so opening the tab does not start a dozen
+    // decoders at once.
+    thumbFor(m).then((src) => {
+      if (!src) return;
+      img.src = src;
+      img.classList.add("ready");
+    });
 
     const name = document.createElement("div");
     name.className = "m-name";
@@ -365,25 +514,23 @@ function renderMedia() {
     meta.className = "m-meta";
     meta.textContent = [
       fmtWhen(m),
-      fmtDur(m.duration_secs),
       m.width && m.height ? `${m.width}×${m.height}` : null,
       fmtBytes(m.bytes),
+      m.audio_tracks.join(" + ") || null,
     ].filter(Boolean).join(" · ");
 
     const left = document.createElement("div");
     left.className = "m-left";
     left.append(name, meta);
 
-    const badges = document.createElement("div");
-    badges.className = "badges";
-    for (const t of m.audio_tracks) {
-      const b = document.createElement("span");
-      b.className = "badge";
-      b.textContent = t;
-      badges.appendChild(b);
-    }
+    const actions = document.createElement("div");
+    actions.className = "m-actions";
+    actions.innerHTML =
+      `<button class="danger" title="Delete">${ICON_TRASH}</button>` +
+      `<button title="Show in folder">${ICON_FOLDER}</button>`;
 
-    li.append(thumb, left, badges);
+    li.append(thumb, left, actions);
+    wireActions(m, li, actions);
     list.appendChild(li);
   }
 }

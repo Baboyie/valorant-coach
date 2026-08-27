@@ -201,6 +201,7 @@ records full matches, which is what gets uploaded anyway.
 
 - Not code-signed, so Smart App Control blocks it on machines that enforce it.
 - Not packaged as MSIX, so WGC draws its yellow capture border (ADR §1).
-- Gallery has no thumbnails; rows are text. A thumbnail means decoding one
-  frame per file through a Media Foundation source reader.
+- Thumbnails are decoded in the webview and kept for the session only, so
+  reopening the app decodes them again. Fine for tens of clips; if the library
+  grows into the hundreds they want caching to disk.
 - The engine's `SetWinEventHook` detection is the fallback, not the primary path.

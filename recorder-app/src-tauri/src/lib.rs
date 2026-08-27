@@ -77,6 +77,17 @@ fn list_media(state: tauri::State<'_, AppState>) -> Vec<media::MediaItem> {
     media::list(&dir)
 }
 
+/// Send a recording to the Recycle Bin, with its sidecar.
+///
+/// Recoverable on purpose — see `media::delete_to_recycle_bin`. The UI still
+/// asks first, because a trip to the bin is a nuisance even when it is not a
+/// loss.
+#[tauri::command]
+fn delete_media(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
+    let root = state.config.lock().unwrap().output_dir.clone();
+    media::delete_to_recycle_bin(&root, std::path::Path::new(&path))
+}
+
 /// Reveal a saved clip in Explorer. Selecting the file rather than opening the
 /// folder saves the user hunting for it among a hundred timestamps.
 #[tauri::command]
@@ -477,6 +488,7 @@ pub fn run() {
             list_audio_devices,
             hide_toast,
             preview_toast,
+            delete_media,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

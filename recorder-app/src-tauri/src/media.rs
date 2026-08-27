@@ -368,6 +368,60 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/* ------------------------------------------------------------- deleting */
+
+/// Send a recording and its sidecar to the Recycle Bin.
+///
+/// **The Recycle Bin, not `remove_file`.** This is footage that cannot be
+/// recovered by re-running anything — one mis-click on a row would otherwise
+/// destroy a round nobody can play again. `FOF_ALLOWUNDO` makes the mistake
+/// cost a trip to the bin instead of the clip.
+///
+/// The path is re-validated here rather than trusted from the caller: this is
+/// reachable from the webview, and the check that a path is an `.mp4` inside
+/// the output directory is the same one that guards serving.
+pub fn delete_to_recycle_bin(root: &Path, video: &Path) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{
+        SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
+        FO_DELETE, SHFILEOPSTRUCTW,
+    };
+
+    if !is_servable(root, video) {
+        return Err("that file is not in the output folder".into());
+    }
+
+    // pFrom is a double-null-terminated list, so both entries go in one call
+    // and the sidecar cannot be orphaned by a failure between two calls.
+    let mut list: Vec<u16> = Vec::new();
+    let mut wide = |p: &Path| {
+        list.extend(p.as_os_str().encode_wide());
+        list.push(0);
+    };
+    use std::os::windows::ffi::OsStrExt;
+    wide(video);
+    let sidecar = video.with_extension("json");
+    if sidecar.exists() {
+        wide(&sidecar);
+    }
+    list.push(0); // terminates the list
+
+    let mut op = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE as u32,
+        pFrom: PCWSTR(list.as_ptr()),
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI).0 as u16,
+        ..Default::default()
+    };
+    let rc = unsafe { SHFileOperationW(&mut op) };
+    if rc != 0 {
+        return Err(format!("Windows refused to delete it (code {rc})"));
+    }
+    if op.fAnyOperationsAborted.as_bool() {
+        return Err("the delete was cancelled".into());
+    }
+    Ok(())
+}
+
 /* --------------------------------------------------------------- tests */
 
 #[cfg(test)]
