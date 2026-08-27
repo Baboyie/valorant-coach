@@ -367,6 +367,13 @@ function thumbFor(m) {
       const v = document.createElement("video");
       v.muted = true;
       v.preload = "metadata";
+      // Without this the canvas is tainted and toDataURL throws: the page runs
+      // on tauri.localhost and the video is served from media.localhost, which
+      // is a different origin however local both are. The media handler already
+      // answers with Access-Control-Allow-Origin, so asking for CORS is all
+      // that was missing — and it must be set before src, or the request goes
+      // out without it.
+      v.crossOrigin = "anonymous";
       let done = false;
       const finish = (val) => {
         if (done) return;
@@ -393,12 +400,16 @@ function thumbFor(m) {
           c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
           clearTimeout(bail);
           finish(c.toDataURL("image/jpeg", 0.72));
-        } catch {
+        } catch (e) {
+          // Was silent, and silence is why an empty grid looked like nothing
+          // was happening rather than like one step failing.
+          console.warn("thumbnail failed for", m.name, e);
           clearTimeout(bail);
           finish(null);
         }
       });
       v.addEventListener("error", () => {
+        console.warn("thumbnail source failed for", m.name, v.error && v.error.message);
         clearTimeout(bail);
         finish(null);
       });
