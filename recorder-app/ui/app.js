@@ -323,10 +323,16 @@ const fmtDur = (secs) => {
 const fmtBytes = (b) => (b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : (b / 1e6).toFixed(1) + " MB");
 const fmtWhen = (m) => {
   const ms = m.started_epoch_ms ?? m.modified_epoch_ms;
-  return new Date(ms).toLocaleString(undefined, {
-    weekday: "short", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  const d = new Date(ms);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  // "Today 06:51" beats "Sat, Aug 22, 06:51 AM" in a 210px card, and the recent
+  // ones are the ones anyone is looking for.
+  if (sameDay) return `Today ${time}`;
+  const days = Math.floor((today - d) / 86400000);
+  if (days < 7) return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
 async function loadMedia() {
@@ -409,24 +415,24 @@ async function deleteMedia(m, li) {
     el("mediaErr").classList.add("hidden");
     await loadMedia();
   } catch (e) {
-    li.classList.remove("confirming");
     const err = el("mediaErr");
     err.textContent = String(e);
     err.classList.remove("hidden");
+    const c = li.querySelector(".mconfirm");
+    if (c) c.remove();
   }
 }
 
-/** Swap a row's buttons for "Delete? · Delete / Cancel", in place. */
-function askToDelete(m, li, actions) {
-  li.classList.add("confirming");
-  const saved = actions.innerHTML;
-  actions.innerHTML = "";
-  const wrap = document.createElement("div");
-  wrap.className = "confirm";
+/** Cover the card's own frame with the question, so which one is unambiguous. */
+function askToDelete(m, li, thumb) {
+  if (thumb.querySelector(".mconfirm")) return;
+  const box = document.createElement("div");
+  box.className = "mconfirm";
 
-  const label = document.createElement("span");
-  label.textContent = "Delete?";
+  const q = document.createElement("p");
+  q.textContent = "Delete this clip?";
 
+  const row = document.createElement("div");
   const yes = document.createElement("button");
   yes.className = "danger";
   yes.textContent = "Delete";
@@ -434,35 +440,18 @@ function askToDelete(m, li, actions) {
     e.stopPropagation();
     deleteMedia(m, li);
   });
-
   const no = document.createElement("button");
   no.textContent = "Cancel";
-  const cancel = (e) => {
-    if (e) e.stopPropagation();
-    li.classList.remove("confirming");
-    actions.innerHTML = saved;
-    wireActions(m, li, actions);
-  };
-  no.addEventListener("click", cancel);
+  no.addEventListener("click", (e) => {
+    e.stopPropagation();
+    box.remove();
+  });
 
-  wrap.append(label, yes, no);
-  actions.appendChild(wrap);
-}
-
-function wireActions(m, li, actions) {
-  const [del, folder] = actions.querySelectorAll("button");
-  if (del) {
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      askToDelete(m, li, actions);
-    });
-  }
-  if (folder) {
-    folder.addEventListener("click", (e) => {
-      e.stopPropagation();
-      invoke("reveal_in_explorer", { path: m.path });
-    });
-  }
+  row.append(yes, no);
+  box.append(q, row);
+  // Swallow the card's own play-on-click while the question is up.
+  box.addEventListener("click", (e) => e.stopPropagation());
+  thumb.appendChild(box);
 }
 
 const ICON_TRASH =
@@ -475,7 +464,7 @@ function renderMedia() {
   const list = el("mediaList");
   list.innerHTML = "";
   // The file being written right now is not watchable — no moov atom until
-  // finalise — so it stays out of the list rather than playing as broken.
+  // finalise — so it stays out of the grid rather than playing as broken.
   const rows = mediaItems.filter(
     (m) => m.kind === mediaTab && m.path !== currentRecordingPath
   );
@@ -487,17 +476,48 @@ function renderMedia() {
     li.addEventListener("click", () => openPlayer(m));
 
     const thumb = document.createElement("div");
-    thumb.className = "thumb";
+    thumb.className = "mthumb";
     thumb.innerHTML = ICON_PLAY;
+
     const img = document.createElement("img");
     img.alt = "";
     thumb.appendChild(img);
+
     if (m.duration_secs != null) {
       const d = document.createElement("span");
       d.className = "dur";
       d.textContent = fmtDur(m.duration_secs);
       thumb.appendChild(d);
     }
+
+    const play = document.createElement("div");
+    play.className = "mplay";
+    play.innerHTML = ICON_PLAY;
+    thumb.appendChild(play);
+
+    const actions = document.createElement("div");
+    actions.className = "mactions";
+
+    const del = document.createElement("button");
+    del.className = "danger";
+    del.title = "Delete";
+    del.innerHTML = ICON_TRASH;
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      askToDelete(m, li, thumb);
+    });
+
+    const folder = document.createElement("button");
+    folder.title = "Show in folder";
+    folder.innerHTML = ICON_FOLDER;
+    folder.addEventListener("click", (e) => {
+      e.stopPropagation();
+      invoke("reveal_in_explorer", { path: m.path });
+    });
+
+    actions.append(del, folder);
+    thumb.appendChild(actions);
+
     // Decoded lazily and in order, so opening the tab does not start a dozen
     // decoders at once.
     thumbFor(m).then((src) => {
@@ -512,25 +532,15 @@ function renderMedia() {
 
     const meta = document.createElement("div");
     meta.className = "m-meta";
-    meta.textContent = [
-      fmtWhen(m),
-      m.width && m.height ? `${m.width}×${m.height}` : null,
-      fmtBytes(m.bytes),
-      m.audio_tracks.join(" + ") || null,
-    ].filter(Boolean).join(" · ");
+    // Narrow cards, so only what distinguishes one clip from another: when it
+    // happened and how big it is. Resolution and tracks live in the tooltip.
+    meta.textContent = [fmtWhen(m), fmtBytes(m.bytes)].filter(Boolean).join(" · ");
 
-    const left = document.createElement("div");
-    left.className = "m-left";
-    left.append(name, meta);
+    const info = document.createElement("div");
+    info.className = "minfo";
+    info.append(name, meta);
 
-    const actions = document.createElement("div");
-    actions.className = "m-actions";
-    actions.innerHTML =
-      `<button class="danger" title="Delete">${ICON_TRASH}</button>` +
-      `<button title="Show in folder">${ICON_FOLDER}</button>`;
-
-    li.append(thumb, left, actions);
-    wireActions(m, li, actions);
+    li.append(thumb, info);
     list.appendChild(li);
   }
 }
