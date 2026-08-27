@@ -106,7 +106,13 @@ A test affordance, not a feature: the engine is otherwise only ever willing to
 record the game, which makes the clip and audio paths unverifiable whenever it
 is not running.
 
-## Building on a OneDrive-synced checkout
+## Where the build output goes
+
+The checkout used to live in OneDrive and no longer does — it is on `D:`, and
+the section below is kept because the failure it describes is easy to walk back
+into by cloning somewhere synced.
+
+## If the checkout is on a OneDrive-synced path
 
 **Build outside the synced folder.** Smart App Control (enforcing on the
 benchmark rig) refuses to execute freshly built unsigned binaries that carry
