@@ -394,12 +394,18 @@ function thumbFor(m) {
       v.addEventListener("seeked", () => {
         try {
           const c = document.createElement("canvas");
-          const w = 136; // twice the CSS box, so it stays sharp on a HiDPI panel
+          // Sized for the grid card it will fill (~253 CSS px), doubled for
+          // display scaling. 136 was right for the old 62px list thumbnail and
+          // is why the grid launched looking like a mosaic — a capture size
+          // must track the box it is shown in.
+          const w = 512;
           c.width = w;
-          c.height = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * w)) || 77;
-          c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+          c.height = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * w)) || 288;
+          const ctx = c.getContext("2d");
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(v, 0, 0, c.width, c.height);
           clearTimeout(bail);
-          finish(c.toDataURL("image/jpeg", 0.72));
+          finish(c.toDataURL("image/jpeg", 0.8));
         } catch (e) {
           // Was silent, and silence is why an empty grid looked like nothing
           // was happening rather than like one step failing.
