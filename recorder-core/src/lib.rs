@@ -18,6 +18,7 @@ pub mod cue;
 pub mod d3d;
 pub mod encoder;
 pub mod encoders;
+pub mod export;
 pub mod mix;
 pub mod mp4;
 pub mod replay;

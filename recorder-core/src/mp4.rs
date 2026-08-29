@@ -181,6 +181,151 @@ fn parse_tracks(moov: &[u8], base: u64) -> Vec<TrackFields> {
     out
 }
 
+/// Make every declared duration agree with the samples actually present.
+///
+/// Media Foundation's sink writer can declare an `mdhd` duration well past the
+/// track's own `stts` sum — observed on passthrough-trimmed audio, where a
+/// 10.2s track declared 13.1s. The sample tables were correct; only the
+/// declarations lied, and players believe declarations, so an 11s clip showed
+/// a 13s timeline with a frozen tail. This rewrites each track's `mdhd` and
+/// `tkhd` duration from its `stts` sum and `mvhd` from the longest track —
+/// in-place byte writes, no size change, safe to run on any finished file.
+pub fn normalize_durations(path: &Path) -> std::io::Result<bool> {
+    let mut f = File::options().read(true).write(true).open(path)?;
+    let len = f.metadata()?.len();
+    let Some((moov_at, moov_len)) = find_top_level(&mut f, len, b"moov")? else {
+        return Ok(false);
+    };
+    let mut moov = vec![0u8; moov_len as usize];
+    f.seek(SeekFrom::Start(moov_at))?;
+    f.read_exact(&mut moov)?;
+
+    // Movie header: the timescale track durations are declared against, and
+    // the whole-movie duration to be recomputed.
+    let Some(mvhd) = children(&moov, 0, moov.len())
+        .into_iter()
+        .find(|c| &c.kind == b"mvhd")
+    else {
+        return Ok(false);
+    };
+    if mvhd.body + 32 > moov.len() {
+        return Ok(false);
+    }
+    let mvhd_v1 = moov[mvhd.body] == 1;
+    let (movie_ts, mvhd_dur_at) = if mvhd_v1 {
+        (be32(&moov, mvhd.body + 20), mvhd.body + 24)
+    } else {
+        (be32(&moov, mvhd.body + 12), mvhd.body + 16)
+    };
+    if movie_ts == 0 {
+        return Ok(false);
+    }
+
+    let mut changed = false;
+    let mut longest_movie_ticks: u64 = 0;
+
+    for trak in children(&moov, 0, moov.len()) {
+        if &trak.kind != b"trak" {
+            continue;
+        }
+        let kids = children(&moov, trak.body, trak.end);
+        let Some(tkhd) = kids.iter().find(|c| &c.kind == b"tkhd") else { continue };
+        let Some(mdia) = kids.iter().find(|c| &c.kind == b"mdia") else { continue };
+        let mk = children(&moov, mdia.body, mdia.end);
+        let Some(mdhd) = mk.iter().find(|c| &c.kind == b"mdhd") else { continue };
+        let Some(minf) = mk.iter().find(|c| &c.kind == b"minf") else { continue };
+        let Some(stts) = children(&moov, minf.body, minf.end)
+            .into_iter()
+            .find(|c| &c.kind == b"stbl")
+            .and_then(|stbl| {
+                children(&moov, stbl.body, stbl.end)
+                    .into_iter()
+                    .find(|c| &c.kind == b"stts")
+            })
+        else {
+            continue;
+        };
+        if mdhd.body + 32 > moov.len() || stts.body + 8 > moov.len() {
+            continue;
+        }
+
+        // The truth: the sum of the sample deltas.
+        let n = be32(&moov, stts.body + 4) as usize;
+        let mut media_ticks: u64 = 0;
+        for i in 0..n {
+            let at = stts.body + 8 + i * 8;
+            if at + 8 > stts.end {
+                break;
+            }
+            media_ticks += be32(&moov, at) as u64 * be32(&moov, at + 4) as u64;
+        }
+        if media_ticks == 0 {
+            continue;
+        }
+
+        let mdhd_v1 = moov[mdhd.body] == 1;
+        let (media_ts, mdhd_dur_at) = if mdhd_v1 {
+            (be32(&moov, mdhd.body + 20), mdhd.body + 24)
+        } else {
+            (be32(&moov, mdhd.body + 12), mdhd.body + 16)
+        };
+        if media_ts == 0 {
+            continue;
+        }
+        let movie_ticks =
+            (media_ticks as u128 * movie_ts as u128 / media_ts as u128) as u64;
+        longest_movie_ticks = longest_movie_ticks.max(movie_ticks);
+
+        if declared(&moov, mdhd_dur_at, mdhd_v1) != media_ticks {
+            write_duration(&mut f, moov_at + mdhd_dur_at as u64, media_ticks, mdhd_v1)?;
+            changed = true;
+        }
+
+        // tkhd's duration is in *movie* timescale, and its version is its own.
+        let tkhd_v1 = moov[tkhd.body] == 1;
+        let tkhd_dur_at = tkhd.body + if tkhd_v1 { 4 + 8 + 8 + 4 + 4 } else { 4 + 4 + 4 + 4 + 4 };
+        if tkhd_dur_at + 8 > moov.len() {
+            continue;
+        }
+        if declared(&moov, tkhd_dur_at, tkhd_v1) != movie_ticks {
+            write_duration(&mut f, moov_at + tkhd_dur_at as u64, movie_ticks, tkhd_v1)?;
+            changed = true;
+        }
+    }
+
+    if longest_movie_ticks > 0 && declared(&moov, mvhd_dur_at, mvhd_v1) != longest_movie_ticks {
+        write_duration(&mut f, moov_at + mvhd_dur_at as u64, longest_movie_ticks, mvhd_v1)?;
+        changed = true;
+    }
+    if changed {
+        f.flush()?;
+    }
+    Ok(changed)
+}
+
+fn be32(b: &[u8], at: usize) -> u32 {
+    u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
+}
+
+fn declared(b: &[u8], at: usize, v1: bool) -> u64 {
+    if v1 {
+        let mut x = [0u8; 8];
+        x.copy_from_slice(&b[at..at + 8]);
+        u64::from_be_bytes(x)
+    } else {
+        be32(b, at) as u64
+    }
+}
+
+fn write_duration(f: &mut File, at: u64, value: u64, v1: bool) -> std::io::Result<()> {
+    f.seek(SeekFrom::Start(at))?;
+    if v1 {
+        f.write_all(&value.to_be_bytes())
+    } else {
+        f.write_all(&(value.min(u32::MAX as u64) as u32).to_be_bytes())
+    }
+}
+
 struct Child {
     kind: [u8; 4],
     /// Index of the box's contents within the buffer.
@@ -368,6 +513,114 @@ mod tests {
     fn a_file_with_no_moov_is_refused_quietly() {
         let p = write_temp("nomoov", b"\0\0\0\x10ftypisom\0\0\0\0isom");
         assert!(!mark_audio_alternates(&p).unwrap());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// A movie (mvhd timescale 1000) whose single audio trak carries real
+    /// timing — an mdhd with a timescale and an stts whose sum is the truth —
+    /// plus whatever declared durations the caller wants to lie with.
+    fn synth_timed(
+        media_ts: u32,
+        declared_media: u32,
+        declared_movie: u32,
+        stts_entries: &[(u32, u32)],
+    ) -> Vec<u8> {
+        fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut v = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+            v.extend_from_slice(kind);
+            v.extend_from_slice(body);
+            v
+        }
+
+        let mut tk = vec![0u8, 0, 0, 3]; // v0, enabled+in-movie
+        tk.extend_from_slice(&[0u8; 8]); // creation, modification
+        tk.extend_from_slice(&1u32.to_be_bytes()); // track_ID
+        tk.extend_from_slice(&[0u8; 4]); // reserved
+        tk.extend_from_slice(&declared_movie.to_be_bytes()); // duration
+        tk.extend_from_slice(&[0u8; 8]); // reserved[2]
+        tk.extend_from_slice(&[0u8; 4]); // layer, alternate_group
+        tk.extend_from_slice(&0x0100u16.to_be_bytes()); // volume
+        tk.extend_from_slice(&[0u8; 2]);
+        tk.extend_from_slice(&[0u8; 36]); // matrix
+        tk.extend_from_slice(&[0u8; 8]); // width, height
+        let tkhd = boxed(b"tkhd", &tk);
+
+        let mut mh = vec![0u8; 4]; // v0
+        mh.extend_from_slice(&[0u8; 8]); // creation, modification
+        mh.extend_from_slice(&media_ts.to_be_bytes());
+        mh.extend_from_slice(&declared_media.to_be_bytes());
+        mh.extend_from_slice(&[0u8; 4]); // language, quality
+        let mdhd = boxed(b"mdhd", &mh);
+
+        let mut h = vec![0u8; 8];
+        h.extend_from_slice(b"soun");
+        h.extend_from_slice(&[0u8; 12]);
+        h.push(0);
+        let hdlr = boxed(b"hdlr", &h);
+
+        let mut st = vec![0u8; 4];
+        st.extend_from_slice(&(stts_entries.len() as u32).to_be_bytes());
+        for (count, delta) in stts_entries {
+            st.extend_from_slice(&count.to_be_bytes());
+            st.extend_from_slice(&delta.to_be_bytes());
+        }
+        let minf = boxed(b"minf", &boxed(b"stbl", &boxed(b"stts", &st)));
+
+        let mut mdia_body = mdhd;
+        mdia_body.extend_from_slice(&hdlr);
+        mdia_body.extend_from_slice(&minf);
+        let mut trak_body = tkhd;
+        trak_body.extend_from_slice(&boxed(b"mdia", &mdia_body));
+        let trak = boxed(b"trak", &trak_body);
+
+        let mut mv = vec![0u8; 4]; // v0
+        mv.extend_from_slice(&[0u8; 8]); // creation, modification
+        mv.extend_from_slice(&1000u32.to_be_bytes()); // movie timescale
+        mv.extend_from_slice(&declared_movie.to_be_bytes());
+        mv.extend_from_slice(&[0u8; 80]); // rate .. next_track_ID
+        let mut moov_body = boxed(b"mvhd", &mv);
+        moov_body.extend_from_slice(&trak);
+
+        let mut out = boxed(b"ftyp", b"isom\0\0\0\0isom");
+        out.extend_from_slice(&boxed(b"moov", &moov_body));
+        out
+    }
+
+    #[test]
+    fn overdeclared_durations_are_corrected_from_stts() {
+        // 480 packets of 1024 ticks at 48 kHz: truly 10.24s of samples, but
+        // declared as 13.1s in track and movie — the sink writer's exact lie.
+        let p = write_temp(
+            "overdecl",
+            &synth_timed(48_000, 628_800, 13_100, &[(480, 1024)]),
+        );
+        assert!(normalize_durations(&p).unwrap(), "should correct something");
+
+        let b = std::fs::read(&p).unwrap();
+        let body_of = |kind: &[u8; 4]| {
+            b.windows(4).position(|w| w == kind).unwrap() + 4
+        };
+        let mdhd = body_of(b"mdhd");
+        assert_eq!(be32(&b, mdhd + 16), 480 * 1024, "mdhd duration");
+        let movie_true = 480u32 * 1024 * 1000 / 48_000;
+        let tkhd = body_of(b"tkhd");
+        assert_eq!(be32(&b, tkhd + 20), movie_true, "tkhd duration");
+        let mvhd = body_of(b"mvhd");
+        assert_eq!(be32(&b, mvhd + 16), movie_true, "mvhd duration");
+
+        assert!(!normalize_durations(&p).unwrap(), "second pass changes nothing");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn correct_durations_are_left_untouched() {
+        let media: u32 = 100 * 512;
+        let movie = (media as u64 * 1000 / 48_000) as u32;
+        let p = write_temp(
+            "gooddecl",
+            &synth_timed(48_000, media, movie, &[(100, 512)]),
+        );
+        assert!(!normalize_durations(&p).unwrap());
         let _ = std::fs::remove_file(&p);
     }
 }

@@ -36,9 +36,10 @@ fn main() -> Result<()> {
         "replay" => cmd_replay(),
         "audio" => cmd_audio(),
         "fixtracks" => cmd_fixtracks(),
+        "export" => cmd_export(),
         other => {
             eprintln!(
-                "unknown command: {other}\n\nusage: recorder-proto [probe|capture|record|replay|audio|fixtracks]"
+                "unknown command: {other}\n\nusage: recorder-proto [probe|capture|record|replay|audio|fixtracks|export]"
             );
             Ok(())
         }
@@ -385,6 +386,51 @@ fn cmd_record() -> Result<()> {
 /// of bytes in place, changes no file size, and is safe to run twice.
 ///
 ///   recorder-proto fixtracks <file-or-directory>...
+/// Trim or transcode a clip, from the command line.
+///
+///   recorder-proto export <src> <start_s> <end_s> copy
+///   recorder-proto export <src> <start_s> <end_s> budget:<MB>[:<max_height>]
+///
+/// The verification instrument for recorder-core::export, the same way
+/// fixtracks is for mp4 — the app calls the same function.
+fn cmd_export() -> Result<()> {
+    use recorder_core::export::{export, ExportMode};
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    if args.len() < 4 {
+        println!("usage: recorder-proto export <src> <start_s> <end_s> copy|budget:<MB>[:<max_height>]");
+        return Ok(());
+    }
+    let src = std::path::PathBuf::from(&args[0]);
+    let start = (args[1].parse::<f64>().unwrap_or(0.0) * 1e7) as i64;
+    let end = (args[2].parse::<f64>().unwrap_or(0.0) * 1e7) as i64;
+    let (mode, tag) = if args[3] == "copy" {
+        (ExportMode::Copy, "cut".to_string())
+    } else if let Some(rest) = args[3].strip_prefix("budget:") {
+        let mut it = rest.split(char::is_whitespace).next().unwrap_or("").split(":");
+        let mb: u64 = it.next().unwrap_or("10").parse().unwrap_or(10);
+        let max_h: u32 = it.next().unwrap_or("0").parse().unwrap_or(0);
+        (
+            ExportMode::Budget { target_bytes: mb * 1024 * 1024, max_height: max_h },
+            format!("{mb}mb"),
+        )
+    } else {
+        println!("unknown mode: {}", args[3]);
+        return Ok(());
+    };
+    let stem = src.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+    let dst = src.with_file_name(format!("{stem}.{tag}.mp4"));
+    println!("exporting {} -> {}", src.display(), dst.display());
+    let r = export(&src, &dst, start, end, mode)?;
+    println!(
+        "done: {:.2} MB, {:.2}s of video, in {:.0} ms (starts at {:.2}s in the source)",
+        r.bytes as f64 / 1e6,
+        r.duration_secs,
+        r.elapsed_ms,
+        r.actual_start_100ns as f64 / 1e7
+    );
+    Ok(())
+}
+
 fn cmd_fixtracks() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(2).collect();
     if args.is_empty() {

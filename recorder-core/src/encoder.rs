@@ -76,7 +76,7 @@ impl EncoderConfig {
 /// its own, deliberately more minimal type: GOP spacing and profile are
 /// instructions to an encoder, and a passthrough mux has no encoder to
 /// instruct.
-fn h264_output_type(cfg: &EncoderConfig) -> Result<IMFMediaType> {
+pub(crate) fn h264_output_type(cfg: &EncoderConfig) -> Result<IMFMediaType> {
     unsafe {
         let t: IMFMediaType = MFCreateMediaType()?;
         t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
@@ -100,7 +100,7 @@ fn h264_output_type(cfg: &EncoderConfig) -> Result<IMFMediaType> {
 ///
 /// 128 kbps stereo. Voice comms and game audio for review do not benefit from
 /// more, and the encoder cost is charged to the CPU, which §2 wants left alone.
-fn aac_output_type(fmt: &crate::audio::AudioFormat) -> Result<IMFMediaType> {
+pub(crate) fn aac_output_type(fmt: &crate::audio::AudioFormat) -> Result<IMFMediaType> {
     unsafe {
         let t: IMFMediaType = MFCreateMediaType()?;
         t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
@@ -118,7 +118,7 @@ fn aac_output_type(fmt: &crate::audio::AudioFormat) -> Result<IMFMediaType> {
 }
 
 /// What we hand the encoder: the interleaved 16-bit PCM `audio.rs` produces.
-fn pcm_input_type(fmt: &crate::audio::AudioFormat) -> Result<IMFMediaType> {
+pub(crate) fn pcm_input_type(fmt: &crate::audio::AudioFormat) -> Result<IMFMediaType> {
     let block_align = fmt.channels as u32 * 2; // 16-bit
     unsafe {
         let t: IMFMediaType = MFCreateMediaType()?;
@@ -154,7 +154,7 @@ fn argb_input_type(cfg: &EncoderConfig) -> Result<IMFMediaType> {
 }
 
 /// D3D device sharing plus the writer attributes both constructors need.
-fn writer_attrs(dev: &d3d::Device) -> Result<(IMFDXGIDeviceManager, IMFAttributes)> {
+pub(crate) fn writer_attrs(dev: &d3d::Device) -> Result<(IMFDXGIDeviceManager, IMFAttributes)> {
     // Share our D3D11 device with Media Foundation so the encoder and the
     // colour converter run on the same device the frames already live on.
     // A second device would mean copying across devices — through RAM.
