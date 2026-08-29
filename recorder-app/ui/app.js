@@ -583,6 +583,10 @@ el("openFolder").addEventListener("click", () => {
 const mediaSrc = (p) => "http://media.localhost/" + encodeURIComponent(p);
 
 function openPlayer(m) {
+  playerItem = m;
+  cut = { start: 0, end: null };
+  renderCut();
+  cutStatus(null);
   el("playerTitle").textContent = m.player ? `${m.player} — ${m.name}` : m.name;
   const v = el("player");
   v.src = mediaSrc(m.path);
@@ -591,12 +595,89 @@ function openPlayer(m) {
 }
 
 function closePlayer() {
+  // A running export keeps going — it captured its paths — and announces
+  // itself with the same toast a clip save gets.
+  playerItem = null;
   const v = el("player");
   v.pause();
   v.removeAttribute("src");
   v.load(); // actually releases the file handle
   el("playerWrap").classList.add("hidden");
 }
+
+/* ------------------------------------------------------------------- cuts */
+
+// Cut points for the open clip, in seconds; a null end means "to the end".
+let playerItem = null;
+let cut = { start: 0, end: null };
+
+const fmtCut = (s) => {
+  const m = Math.floor(s / 60);
+  return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
+};
+
+function renderCut() {
+  const whole = cut.start <= 0.05 && cut.end == null;
+  el("cutRange").textContent = whole
+    ? "whole clip"
+    : `${fmtCut(cut.start)} → ${cut.end != null ? fmtCut(cut.end) : "end"}`;
+}
+
+function cutStatus(msg) {
+  const p = el("cutStatus");
+  p.textContent = msg || "";
+  p.classList.toggle("hidden", !msg);
+}
+
+el("cutStart").addEventListener("click", () => {
+  cut.start = el("player").currentTime || 0;
+  // An end before the new start is no longer a cut anyone meant.
+  if (cut.end != null && cut.end <= cut.start) cut.end = null;
+  renderCut();
+});
+
+el("cutEnd").addEventListener("click", () => {
+  const t = el("player").currentTime || 0;
+  if (t <= cut.start) {
+    cutStatus("the end must come after the start — scrub past it first");
+    return;
+  }
+  cut.end = t;
+  renderCut();
+});
+
+el("cutExport").addEventListener("click", async () => {
+  const m = playerItem;
+  if (!m) return;
+  const startS = cut.start;
+  const endS = cut.end != null ? cut.end : el("player").duration;
+  if (!isFinite(endS) || endS <= startS) {
+    cutStatus("nothing to export — the cut is empty");
+    return;
+  }
+  const mode = el("cutMode").value;
+  const btn = el("cutExport");
+  btn.disabled = true;
+  cutStatus(
+    mode === "trim"
+      ? "Exporting…"
+      : "Re-encoding — takes about a second per second of clip…"
+  );
+  try {
+    const r = await invoke("export_clip", { path: m.path, startS, endS, mode });
+    let msg = `Saved ${r.path.split(/[\\/]/).pop()} · ${fmtBytes(r.bytes)}`;
+    // A lossless trim can only start on a keyframe; say so when it moved.
+    if (mode === "trim" && startS - r.actual_start_s > 0.05) {
+      msg += ` · starts ${(startS - r.actual_start_s).toFixed(1)}s early (keyframe)`;
+    }
+    cutStatus(msg);
+    loadMedia();
+  } catch (e) {
+    cutStatus("Export failed: " + e);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // A <video> that cannot load shows 0:00 and nothing else. Put the reason
 // where the title was, so "stuck" becomes a code someone can act on:

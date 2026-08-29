@@ -37,6 +37,12 @@ pub enum Notice {
     ClipSaved { path: PathBuf, ms: f64 },
     RecordingStarted,
     RecordingSaved { path: PathBuf, secs: f64 },
+    /// An export finished. Raised from the export command's blocking task via
+    /// `Engine::notify`, not from the engine thread — the engine never touches
+    /// exports — but announced through the same chime/toast/tooltip path,
+    /// because a minute-long re-encode outlives most people's patience for
+    /// watching a spinner.
+    ExportReady { path: PathBuf, bytes: u64 },
     Failed { what: String },
 }
 
@@ -120,6 +126,9 @@ pub struct Engine {
     /// Taken once, by whoever will present the notices. An Option so a second
     /// caller gets None rather than a silently competing consumer.
     notices: Mutex<Option<Receiver<Notice>>>,
+    /// A way into the notice stream for events born outside the engine
+    /// thread — see `notify`.
+    notice_tx: Sender<Notice>,
 }
 
 impl Engine {
@@ -128,16 +137,23 @@ impl Engine {
         let status = Arc::new(Mutex::new(Status::default()));
         let thread_status = Arc::clone(&status);
         let (notice_tx, notice_rx) = mpsc::channel();
+        let engine_notice_tx = notice_tx.clone();
         std::thread::Builder::new()
             .name("recorder-engine".into())
-            .spawn(move || run(config, rx, thread_status, notice_tx))
+            .spawn(move || run(config, rx, thread_status, engine_notice_tx))
             .expect("failed to spawn recorder engine thread");
-        Engine { tx, status, notices: Mutex::new(Some(notice_rx)) }
+        Engine { tx, status, notices: Mutex::new(Some(notice_rx)), notice_tx }
     }
 
     /// Hand the notice stream to its one consumer.
     pub fn take_notices(&self) -> Option<Receiver<Notice>> {
         self.notices.lock().unwrap().take()
+    }
+
+    /// Announce something that happened outside the engine thread — an export
+    /// finishing — through the same chime/toast/tooltip path as a save.
+    pub fn notify(&self, notice: Notice) {
+        let _ = self.notice_tx.send(notice);
     }
 
     pub fn send(&self, cmd: Cmd) {

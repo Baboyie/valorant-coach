@@ -286,7 +286,7 @@ pub fn serve(
 /// The only files this scheme will touch: `.mp4`, inside the output directory.
 /// Canonicalised on both sides so `..` and symlink tricks resolve before the
 /// containment check, not after.
-fn is_servable(root: &Path, candidate: &Path) -> bool {
+pub(crate) fn is_servable(root: &Path, candidate: &Path) -> bool {
     let mp4 = candidate
         .extension()
         .map(|e| e.eq_ignore_ascii_case("mp4"))

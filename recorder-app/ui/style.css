@@ -528,3 +528,11 @@ input.gain { flex: none; width: 104px; padding: 0; accent-color: var(--accent); 
 .player-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; }
 .player-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player video { width: 100%; flex: 1; min-height: 0; background: #000; border-radius: 10px; outline: none; }
+
+/* The cut bar under the video: two marks against the same playhead the user
+   is scrubbing, a destination, and one Export. */
+.cutbar { flex: none; display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.cutbar button { flex: none; padding: 7px 12px; font-size: 12.5px; }
+.cut-range { font-family: var(--font-data); font-size: 12px; color: var(--muted); min-width: 108px; text-align: center; }
+.cutbar select { flex: none; width: auto; margin-left: auto; padding: 7px 10px; font-size: 12.5px; }
+.cut-status { flex: none; margin-top: 6px; }

@@ -88,6 +88,120 @@ fn delete_media(state: tauri::State<'_, AppState>, path: String) -> Result<(), S
     media::delete_to_recycle_bin(&root, std::path::Path::new(&path))
 }
 
+/// Cut a clip, losslessly or re-encoded to a size that uploads.
+///
+/// Cut points arrive in seconds because that is what a `<video>` element
+/// speaks; the core speaks 100ns units. The work runs on a blocking task —
+/// a re-encode costs on the order of a second per second of footage — and
+/// completion is announced like any save, so the toast and chime answer
+/// "is it done yet?" even if the window was tabbed away from.
+#[tauri::command]
+async fn export_clip(
+    app: AppHandle,
+    path: String,
+    start_s: f64,
+    end_s: f64,
+    mode: String,
+) -> Result<serde_json::Value, String> {
+    let src = std::path::PathBuf::from(&path);
+    {
+        let state = app.state::<AppState>();
+        let root = state.config.lock().unwrap().output_dir.clone();
+        // Same containment check that guards serving and deleting: an .mp4
+        // inside the output directory, or nothing.
+        if !media::is_servable(&root, &src) {
+            return Err("that file is not in the output folder".into());
+        }
+    }
+    if !(end_s > start_s) {
+        return Err("the end of the cut must be after its start".into());
+    }
+
+    let dur = end_s - start_s;
+    let (suffix, core_mode) = match mode.as_str() {
+        // Lossless packet copy; the start snaps back to the nearest keyframe,
+        // at most half a second with our GOP.
+        "trim" => ("trim", recorder_core::export::ExportMode::Copy),
+        // Under Discord's 10 MB free-tier cap, with margin for the container.
+        "discord" => (
+            "discord",
+            recorder_core::export::ExportMode::Budget {
+                target_bytes: 9_500_000,
+                max_height: 720,
+            },
+        ),
+        // 720p priced per second (~6 Mbps) rather than to a fixed cap, so a
+        // long recording shrinks without being starved into mush.
+        "compact" => (
+            "compact",
+            recorder_core::export::ExportMode::Budget {
+                target_bytes: ((dur * 750_000.0) as u64).max(2_000_000),
+                max_height: 720,
+            },
+        ),
+        other => return Err(format!("unknown export mode: {other}")),
+    };
+
+    let dst = export_destination(&src, suffix)?;
+    let start = (start_s * 1e7) as i64;
+    let end = (end_s * 1e7) as i64;
+
+    let src_task = src.clone();
+    let dst_task = dst.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        recorder_core::export::export(&src_task, &dst_task, start, end, core_mode)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let state = app.state::<AppState>();
+    match report {
+        Ok(r) => {
+            state.engine.notify(engine::Notice::ExportReady {
+                path: dst.clone(),
+                bytes: r.bytes,
+            });
+            Ok(serde_json::json!({
+                "path": dst.to_string_lossy(),
+                "bytes": r.bytes,
+                "duration_secs": r.duration_secs,
+                "actual_start_s": r.actual_start_100ns as f64 / 1e7,
+                "elapsed_ms": r.elapsed_ms,
+            }))
+        }
+        Err(e) => {
+            // A failed export must not leave a half-written file posing as a
+            // clip in the gallery.
+            let _ = std::fs::remove_file(&dst);
+            let what = format!("export failed: {e}");
+            state.engine.notify(engine::Notice::Failed { what: what.clone() });
+            Err(what)
+        }
+    }
+}
+
+/// `clip-x.mp4` + "trim" → `clip-x.trim.mp4`, stepping to `.trim-2.mp4` and on
+/// rather than overwriting an export that already exists.
+fn export_destination(src: &std::path::Path, suffix: &str) -> Result<std::path::PathBuf, String> {
+    let stem = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("that file has no usable name")?;
+    let dir = src.parent().ok_or("that file has no parent folder")?;
+    for n in 1..100u32 {
+        let name = if n == 1 {
+            format!("{stem}.{suffix}.mp4")
+        } else {
+            format!("{stem}.{suffix}-{n}.mp4")
+        };
+        let p = dir.join(name);
+        if !p.exists() {
+            return Ok(p);
+        }
+    }
+    Err("too many exports of that clip already exist".into())
+}
+
 /// Reveal a saved clip in Explorer. Selecting the file rather than opening the
 /// folder saves the user hunting for it among a hundred timestamps.
 #[tauri::command]
@@ -295,6 +409,12 @@ fn present_notices(app: AppHandle, rx: std::sync::mpsc::Receiver<engine::Notice>
                 format!("{} · {:.0}s", name(path), secs),
                 recorder_core::cue::marker as fn(),
             ),
+            Notice::ExportReady { path, bytes } => (
+                "saved",
+                "Export ready",
+                format!("{} · {:.1} MB", name(path), *bytes as f64 / 1e6),
+                recorder_core::cue::saved as fn(),
+            ),
             Notice::Failed { what } => (
                 "failed",
                 "DEBRIEF",
@@ -489,6 +609,7 @@ pub fn run() {
             hide_toast,
             preview_toast,
             delete_media,
+            export_clip,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

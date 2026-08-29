@@ -238,6 +238,21 @@
       </button>
     </div>
     <video id="player" controls></video>
+    <!-- Mark two points against the same playhead being scrubbed, pick a
+         destination, export. Lossless trims snap their start back to the
+         nearest keyframe (≤0.5s); re-encodes are exact and take time. -->
+    <div class="cutbar">
+      <button id="cutStart" title="Mark the cut's start at the playhead">Set start</button>
+      <span id="cutRange" class="cut-range">whole clip</span>
+      <button id="cutEnd" title="Mark the cut's end at the playhead">Set end</button>
+      <select id="cutMode" title="How to export">
+        <option value="trim">Lossless trim</option>
+        <option value="discord">For Discord — under 10 MB</option>
+        <option value="compact">Compact 720p</option>
+      </select>
+      <button id="cutExport" class="primary">Export</button>
+    </div>
+    <p id="cutStatus" class="muted small cut-status hidden"></p>
   </div>
 
   <script src="app.js"></script>
