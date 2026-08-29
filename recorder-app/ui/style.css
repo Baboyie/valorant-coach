@@ -529,10 +529,38 @@ input.gain { flex: none; width: 104px; padding: 0; accent-color: var(--accent); 
 .player-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player video { width: 100%; flex: 1; min-height: 0; background: #000; border-radius: 10px; outline: none; }
 
-/* The cut bar under the video: two marks against the same playhead the user
-   is scrubbing, a destination, and one Export. */
-.cutbar { flex: none; display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+/* The cut bar under the video: a two-handled trim slider that scrubs the
+   preview as it is dragged, a destination, and one Export. */
+.cutbar { flex: none; display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .cutbar button { flex: none; padding: 7px 12px; font-size: 12.5px; }
-.cut-range { font-family: var(--font-data); font-size: 12px; color: var(--muted); min-width: 108px; text-align: center; }
-.cutbar select { flex: none; width: auto; margin-left: auto; padding: 7px 10px; font-size: 12.5px; }
+.cut-range { flex: none; font-family: var(--font-data); font-size: 12px; color: var(--muted); min-width: 108px; text-align: center; }
+.cutbar select { flex: none; width: auto; padding: 7px 10px; font-size: 12.5px; }
 .cut-status { flex: none; margin-top: 6px; }
+
+.trim { position: relative; flex: 1; min-width: 220px; height: 28px; cursor: pointer; touch-action: none; }
+.trim.dim { opacity: 0.35; pointer-events: none; }
+.trim-track {
+  position: absolute; left: 0; right: 0; top: 50%; height: 6px;
+  transform: translateY(-50%);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+}
+/* The kept region. */
+.trim-sel {
+  position: absolute; top: 50%; height: 6px; transform: translateY(-50%);
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 3px; pointer-events: none;
+}
+/* Where playback currently is — the frame being previewed. */
+.trim-play {
+  position: absolute; top: 4px; bottom: 4px; width: 2px;
+  transform: translateX(-50%);
+  background: var(--text); opacity: 0.6; border-radius: 1px; pointer-events: none;
+}
+.trim-handle {
+  position: absolute; top: 50%; width: 12px; height: 20px;
+  transform: translate(-50%, -50%);
+  background: var(--accent); border-radius: 4px; cursor: ew-resize;
+  box-shadow: var(--edge);
+}
+.trim-handle:hover { background: #4ad9c5; }
+.trim-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

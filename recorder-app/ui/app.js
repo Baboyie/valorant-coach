@@ -607,7 +607,8 @@ function closePlayer() {
 
 /* ------------------------------------------------------------------- cuts */
 
-// Cut points for the open clip, in seconds; a null end means "to the end".
+// Cut points for the open clip, in seconds; a null end means "to the end"
+// (the duration is not known until the metadata loads).
 let playerItem = null;
 let cut = { start: 0, end: null };
 
@@ -616,8 +617,14 @@ const fmtCut = (s) => {
   return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
 };
 
+// The shortest cut worth exporting; also keeps the two handles from
+// crossing or sitting on top of each other.
+const MIN_CUT = 0.2;
+
 function renderCut() {
-  const whole = cut.start <= 0.05 && cut.end == null;
+  const dur = el("player").duration;
+  const whole =
+    cut.start <= 0.05 && (cut.end == null || (isFinite(dur) && cut.end >= dur - 0.05));
   el("cutRange").textContent = whole
     ? "whole clip"
     : `${fmtCut(cut.start)} → ${cut.end != null ? fmtCut(cut.end) : "end"}`;
@@ -629,22 +636,138 @@ function cutStatus(msg) {
   p.classList.toggle("hidden", !msg);
 }
 
-el("cutStart").addEventListener("click", () => {
-  cut.start = el("player").currentTime || 0;
-  // An end before the new start is no longer a cut anyone meant.
-  if (cut.end != null && cut.end <= cut.start) cut.end = null;
-  renderCut();
-});
+/* The trim slider. Dragging a handle scrubs the video to it, so the frame
+   under the cut point is always the one on screen. */
 
-el("cutEnd").addEventListener("click", () => {
-  const t = el("player").currentTime || 0;
-  if (t <= cut.start) {
-    cutStatus("the end must come after the start — scrub past it first");
+function trimLayout() {
+  const v = el("player");
+  const dur = v.duration;
+  const ok = isFinite(dur) && dur > 0;
+  el("trimBar").classList.toggle("dim", !ok);
+  if (!ok) return;
+  const end = cut.end != null ? cut.end : dur;
+  const pct = (t) => Math.min(100, Math.max(0, (t / dur) * 100)) + "%";
+  el("trimStart").style.left = pct(cut.start);
+  el("trimEnd").style.left = pct(end);
+  const sel = el("trimSel");
+  sel.style.left = pct(cut.start);
+  sel.style.width = Math.max(0, ((end - cut.start) / dur) * 100) + "%";
+  el("trimPlay").style.left = pct(v.currentTime);
+  renderCut();
+}
+
+// Seeks are coalesced: scrubbing fires far faster than the decoder lands on
+// frames, and queueing every position would leave the preview replaying a
+// history of stale seeks after the pointer stopped.
+let pendingSeek = null;
+function previewSeek(t) {
+  const v = el("player");
+  if (!v.paused) v.pause();
+  if (v.seeking) {
+    pendingSeek = t;
     return;
   }
-  cut.end = t;
-  renderCut();
+  v.currentTime = t;
+}
+
+function timeAtX(clientX) {
+  const r = el("trimBar").getBoundingClientRect();
+  const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+  return f * (el("player").duration || 0);
+}
+
+/** Move one cut point to `t`, clamped so the cut never collapses. */
+function setCutPoint(which, t) {
+  const dur = el("player").duration;
+  if (!isFinite(dur) || dur <= 0) return;
+  if (which === "start") {
+    cut.start = Math.max(0, Math.min(t, (cut.end != null ? cut.end : dur) - MIN_CUT));
+    previewSeek(cut.start);
+  } else {
+    cut.end = Math.min(dur, Math.max(t, cut.start + MIN_CUT));
+    previewSeek(cut.end);
+  }
+  trimLayout();
+}
+
+// A plain flag rather than hasPointerCapture: capture is requested as an
+// optimisation (moves keep coming when the pointer leaves the handle) but the
+// drag must not depend on it being granted.
+let trimDrag = null;
+
+function wireHandle(which) {
+  const h = el(which === "start" ? "trimStart" : "trimEnd");
+  h.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    trimDrag = which;
+    try {
+      h.setPointerCapture(e.pointerId);
+    } catch {}
+    h.focus();
+  });
+  h.addEventListener("pointermove", (e) => {
+    if (trimDrag !== which) return;
+    setCutPoint(which, timeAtX(e.clientX));
+  });
+  for (const ev of ["pointerup", "pointercancel"]) {
+    h.addEventListener(ev, () => (trimDrag = null));
+  }
+  h.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 1 : 0.1;
+    const delta =
+      e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : null;
+    if (delta == null) return;
+    e.preventDefault();
+    const dur = el("player").duration;
+    const at = which === "start" ? cut.start : cut.end != null ? cut.end : dur;
+    setCutPoint(which, at + delta);
+  });
+}
+wireHandle("start");
+wireHandle("end");
+
+// Pressing on the bare track grabs the nearer handle and starts dragging it —
+// one gesture instead of an aim-for-the-handle test of dexterity.
+el("trimBar").addEventListener("pointerdown", (e) => {
+  const v = el("player");
+  const dur = v.duration;
+  if (!isFinite(dur) || dur <= 0) return;
+  const t = timeAtX(e.clientX);
+  const end = cut.end != null ? cut.end : dur;
+  const which = Math.abs(t - cut.start) <= Math.abs(t - end) ? "start" : "end";
+  trimDrag = which;
+  const h = el(which === "start" ? "trimStart" : "trimEnd");
+  try {
+    h.setPointerCapture(e.pointerId);
+  } catch {}
+  setCutPoint(which, t);
 });
+window.addEventListener("pointerup", () => (trimDrag = null));
+
+{
+  const v = el("player");
+  // The duration exists only once metadata loads; that is when a fresh clip's
+  // cut becomes the whole clip and the slider first has a scale to draw on.
+  v.addEventListener("loadedmetadata", () => {
+    cut = { start: 0, end: v.duration };
+    trimLayout();
+  });
+  v.addEventListener("seeked", () => {
+    if (pendingSeek != null) {
+      const t = pendingSeek;
+      pendingSeek = null;
+      v.currentTime = t;
+    }
+    trimLayout();
+  });
+  v.addEventListener("timeupdate", () => {
+    const dur = v.duration;
+    if (!isFinite(dur) || dur <= 0) return;
+    el("trimPlay").style.left =
+      Math.min(100, Math.max(0, (v.currentTime / dur) * 100)) + "%";
+  });
+}
 
 el("cutExport").addEventListener("click", async () => {
   const m = playerItem;
