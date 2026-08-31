@@ -7,9 +7,13 @@
 //! needs one thing the pipeline never had — the UTC instant each recording
 //! started.
 //!
-//! Written as a sidecar rather than into the MP4 so it stays readable and
-//! editable without a muxer, and so a recording whose upload failed can still
-//! be matched up later by hand.
+//! Written as JSON rather than into the MP4 so it stays readable and editable
+//! without a muxer, and so a recording whose upload failed can still be
+//! matched up later by hand. But **not next to the video**: the output folder
+//! is something people browse and share, and a JSON file shadowing every clip
+//! reads as clutter (it was asked about twice). Metadata belongs to the app,
+//! in its own data directory, keyed by the video's filename — which carries a
+//! timestamp to the second and is therefore unique.
 
 use std::path::{Path, PathBuf};
 
@@ -51,14 +55,34 @@ pub enum RecordingKind {
     Recording,
 }
 
+/// The app's metadata directory: `%APPDATA%\DEBRIEF\meta`.
+///
+/// `DEBRIEF_META_DIR` overrides it so tests can exercise migration without
+/// writing into the real profile.
+pub fn meta_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("DEBRIEF_META_DIR") {
+        return PathBuf::from(d);
+    }
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("DEBRIEF")
+        .join("meta")
+}
+
 impl VodMeta {
-    /// Sidecar path for a recording: `foo.mp4` -> `foo.json`.
+    /// Metadata path for a recording: `...\clips\foo.mp4` -> `<meta>\foo.json`.
     pub fn sidecar_path(video: &Path) -> PathBuf {
-        video.with_extension("json")
+        let mut name = video.file_stem().unwrap_or_default().to_os_string();
+        name.push(".json");
+        meta_dir().join(name)
     }
 
     pub fn write(&self, video: &Path) -> std::io::Result<PathBuf> {
         let path = Self::sidecar_path(video);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         // No BOM — the server and every JSON parser reject one, and this

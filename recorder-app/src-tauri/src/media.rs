@@ -52,6 +52,43 @@ pub fn migrate_layout(dir: &Path) {
         }
         let _ = std::fs::rename(&p, &dest);
     }
+
+    // Second pass: metadata used to live beside its video, and a folder full
+    // of shadowing .json files reads as clutter to anyone browsing their
+    // clips. Move every sidecar into the app's own meta directory. Same
+    // never-overwrite rule; a name collision leaves the original alone.
+    let meta = crate::vod::meta_dir();
+    for sub in [Some(CLIPS_DIR), Some(RECORDINGS_DIR), None] {
+        let d = match sub {
+            Some(s) => dir.join(s),
+            None => dir.to_path_buf(),
+        };
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let Some(name) = p.file_name().and_then(|n| n.to_str()) else { continue };
+            if !p.is_file()
+                || !name.ends_with(".json")
+                || !(name.starts_with("clip-") || name.starts_with("recording-"))
+            {
+                continue;
+            }
+            if std::fs::create_dir_all(&meta).is_err() {
+                return;
+            }
+            let dest = meta.join(name);
+            if dest.exists() {
+                continue;
+            }
+            // rename fails across volumes (the output folder is wherever the
+            // user pointed it; %APPDATA% is on C:), so fall back to copy+delete.
+            if std::fs::rename(&p, &dest).is_err()
+                && std::fs::copy(&p, &dest).is_ok()
+            {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
 }
 
 /* ------------------------------------------------------------- listing */
@@ -121,10 +158,16 @@ fn item_for(p: &Path, sub: Option<&str>) -> MediaItem {
         .unwrap_or(0);
 
     // Parsed loosely rather than through VodMeta: a sidecar from an older or
-    // newer build should degrade to missing fields, not to a missing row.
-    let side: Option<serde_json::Value> = std::fs::read_to_string(p.with_extension("json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(s.trim_start_matches('\u{feff}')).ok());
+    // newer build should degrade to missing fields, not to a missing row. The
+    // meta directory is where sidecars live now; beside the video is the
+    // legacy spot, still read so nothing goes missing if migration could not
+    // move one.
+    let side: Option<serde_json::Value> = std::fs::read_to_string(
+        crate::vod::VodMeta::sidecar_path(p),
+    )
+    .or_else(|_| std::fs::read_to_string(p.with_extension("json")))
+    .ok()
+    .and_then(|s| serde_json::from_str(s.trim_start_matches('\u{feff}')).ok());
     let g = |k: &str| side.as_ref().and_then(|v| v.get(k).cloned());
 
     let kind = if name.starts_with("clip-") {
@@ -400,9 +443,15 @@ pub fn delete_to_recycle_bin(root: &Path, video: &Path) -> Result<(), String> {
     };
     use std::os::windows::ffi::OsStrExt;
     wide(video);
-    let sidecar = video.with_extension("json");
-    if sidecar.exists() {
-        wide(&sidecar);
+    // The metadata goes with its video — from the meta directory where it
+    // lives now, and from beside the video where older builds put it.
+    for sidecar in [
+        crate::vod::VodMeta::sidecar_path(video),
+        video.with_extension("json"),
+    ] {
+        if sidecar.exists() {
+            wide(&sidecar);
+        }
     }
     list.push(0); // terminates the list
 
@@ -451,6 +500,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("debrief-media-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        // Keep sidecar migration out of the real %APPDATA%.
+        let meta = dir.join("meta");
+        std::env::set_var("DEBRIEF_META_DIR", &meta);
 
         std::fs::write(dir.join("clip-20260101-000000.mp4"), b"v").unwrap();
         std::fs::write(
@@ -464,9 +516,11 @@ mod tests {
         migrate_layout(&dir);
 
         assert!(dir.join(CLIPS_DIR).join("clip-20260101-000000.mp4").exists());
-        assert!(dir.join(CLIPS_DIR).join("clip-20260101-000000.json").exists());
         assert!(dir.join(RECORDINGS_DIR).join("recording-20260101-000001.mp4").exists());
         assert!(dir.join("unrelated.txt").exists(), "migration must not touch other files");
+        // The sidecar leaves the browsed folders entirely.
+        assert!(meta.join("clip-20260101-000000.json").exists());
+        assert!(!dir.join(CLIPS_DIR).join("clip-20260101-000000.json").exists());
 
         // Idempotent: nothing left to move, nothing breaks.
         migrate_layout(&dir);
@@ -474,13 +528,14 @@ mod tests {
         let items = list(&dir);
         assert_eq!(items.len(), 2);
         let clip = items.iter().find(|m| m.kind == "clip").unwrap();
-        assert_eq!(clip.duration_secs, Some(30.5));
+        assert_eq!(clip.duration_secs, Some(30.5), "metadata read from the meta dir");
         assert_eq!(clip.player.as_deref(), Some("babu"));
         assert_eq!(clip.width, Some(1600));
         let rec = items.iter().find(|m| m.kind == "recording").unwrap();
         assert_eq!(rec.duration_secs, None, "no sidecar still lists");
         assert_eq!(rec.bytes, 2);
 
+        std::env::remove_var("DEBRIEF_META_DIR");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
