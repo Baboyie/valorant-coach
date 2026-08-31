@@ -206,8 +206,36 @@ fn export_destination(src: &std::path::Path, suffix: &str) -> Result<std::path::
 /// folder saves the user hunting for it among a hundred timestamps.
 #[tauri::command]
 fn reveal_in_explorer(path: String) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    // raw_arg, not arg: std's quoting wraps the whole argument in quotes and
+    // backslash-escapes the ones already in it, so Explorer received
+    // `/select,` with literal quote characters inside the path — which it
+    // cannot parse, and its answer to an argument it cannot parse is to
+    // silently open the default folder (Documents). The form Explorer
+    // actually accepts is exactly `/select,"C:\path"`, passed verbatim.
     std::process::Command::new("explorer.exe")
-        .arg(format!("/select,\"{path}\""))
+        .raw_arg(format!("/select,\"{path}\""))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Open the output folder itself — the clips or recordings subfolder for the
+/// tab being looked at. Unlike reveal, this works when the library is empty,
+/// which is exactly when someone goes looking for where files will end up.
+#[tauri::command]
+fn open_output_folder(state: tauri::State<'_, AppState>, kind: Option<String>) -> Result<(), String> {
+    let root = state.config.lock().unwrap().output_dir.clone();
+    let sub = match kind.as_deref() {
+        Some("clip") => root.join("clips"),
+        Some("recording") => root.join("recordings"),
+        _ => root.clone(),
+    };
+    // The subfolder appears with the first save; before that, the root is the
+    // honest thing to show rather than an error about a folder that will exist.
+    let dir = if sub.is_dir() { sub } else { root };
+    std::process::Command::new("explorer.exe")
+        .arg(&dir)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -603,6 +631,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             reveal_in_explorer,
+            open_output_folder,
             list_targets,
             list_media,
             list_audio_devices,

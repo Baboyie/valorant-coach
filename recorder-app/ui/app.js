@@ -571,9 +571,10 @@ const setLibTab = (tab) => {
 el("tabClips").addEventListener("click", () => setLibTab("clip"));
 el("tabRecs").addEventListener("click", () => setLibTab("recording"));
 
+// The folder itself, not a file selected inside it — and it works when the
+// library is empty, which is exactly when someone wonders where files will go.
 el("openFolder").addEventListener("click", () => {
-  const any = mediaItems.find((m) => m.kind === mediaTab) || mediaItems[0];
-  if (any) invoke("reveal_in_explorer", { path: any.path });
+  invoke("open_output_folder", { kind: mediaTab }).catch(() => {});
 });
 
 /* ---------------------------------------------------------------- player */
