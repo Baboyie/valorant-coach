@@ -17,7 +17,7 @@ target/
 recorder-app/src-tauri/gen/
 
 # local review data (matches, notes, comments, scoreboards)
-data/
+/data/
 
 # vercel cli
 .vercel/
