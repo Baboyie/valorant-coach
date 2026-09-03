@@ -105,7 +105,7 @@
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     color:var(--ink-dim); font-size:12px; font-family:'JetBrains Mono',monospace; pointer-events:none;
   }
-  .callout-txt{font-family:'JetBrains Mono',monospace; font-size:13px; fill:rgba(232,236,239,0.55);
+  .callout-txt{font-family:'JetBrains Mono',monospace; font-size:13px; fill:rgba(232,236,239,0.82);
                paint-order:stroke; stroke:#05080B; stroke-width:3px; stroke-linejoin:round; pointer-events:none;}
   .obj-sel{stroke:var(--cyan); stroke-width:2; fill:none; stroke-dasharray:4 3; pointer-events:none;}
 
@@ -134,19 +134,50 @@
   .kit-head .role{font-size:10px; color:var(--ink-dim); letter-spacing:0.12em;}
   .kit-empty{color:var(--ink-dim); font-size:11.5px; font-style:italic; line-height:1.6;}
 
-  .abilrow{display:grid; grid-template-columns:repeat(4,1fr); gap:8px;}
-  .abil{background:var(--bg-panel-raised); border:1px solid var(--edge);
-        border-radius:3px; cursor:pointer; padding:7px 4px 5px;
+  .abilrow{display:grid; grid-template-columns:repeat(4,1fr); gap:6px;}
+  .abil{position:relative; background:var(--bg-panel-raised); border:1px solid var(--edge);
+        border-radius:3px; cursor:pointer; padding:9px 3px 6px;
         display:flex; flex-direction:column; align-items:center; gap:5px;}
-  .abil img{width:34px; height:34px; object-fit:contain;}
-  .abil .k{font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--red);}
+  .abil img{width:38px; height:38px; object-fit:contain;}
+  .abil .k{position:absolute; top:3px; left:5px; font-family:'JetBrains Mono',monospace;
+           font-size:9px; color:var(--red);}
+  /* How many are already on the board — the number you are actually managing
+     when you plan a round. */
+  .abil .ct{position:absolute; top:2px; right:3px; font-family:'JetBrains Mono',monospace;
+            font-size:9px; color:var(--ink); background:var(--bg-void); border:1px solid var(--edge);
+            border-radius:8px; padding:0 4px; line-height:13px;}
+  .abil .ct:empty{display:none;}
   .abil .an{font-size:8.5px; color:var(--ink-dim); text-align:center; line-height:1.25;
             text-transform:uppercase; letter-spacing:0.04em;}
   .abil:hover{border-color:var(--ink-dim);}
   .abil:hover .an{color:var(--ink);}
   .abil.on{border-color:var(--cyan); background:rgba(77,232,216,0.12);}
   .abil.on .an{color:var(--cyan);}
-  .abil .sz{font-family:'JetBrains Mono',monospace; font-size:8px; color:var(--amber);}
+  /* Footprint size, in the colour it draws on the board. */
+  .abil .sz{font-family:'JetBrains Mono',monospace; font-size:8px; line-height:1.2; text-align:center;}
+  .abil .sz i{display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:3px;}
+
+  /* What the hovered (or armed) ability does, from the same two datasets that
+     size it — so a tile never has to say more than a name. */
+  .kit-detail{margin-top:10px; padding:10px 11px; background:var(--bg-panel-raised);
+              border:1px solid var(--edge); border-radius:3px; min-height:124px;}
+  .kd-name{display:flex; align-items:baseline; gap:8px; font-family:'Chakra Petch',sans-serif;
+           text-transform:uppercase; font-size:12px; letter-spacing:0.06em;}
+  .kd-name .key{font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--red);}
+  .kd-name .kind{margin-left:auto; font-size:9px; letter-spacing:0.12em;}
+  .facts{display:flex; flex-wrap:wrap; gap:4px; margin:8px 0;}
+  .fact{font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--ink);
+        background:var(--bg-void); border:1px solid var(--edge); border-radius:2px; padding:2px 6px;}
+  .fact.tag{color:var(--ink-dim);}
+  .kd-desc{margin:0; font-size:11px; line-height:1.5; color:var(--ink-dim);}
+  .kd-empty{font-size:11px; color:var(--ink-dim); font-style:italic; line-height:1.6;}
+  .kit-head .role{display:flex; align-items:center; gap:5px;}
+  .kit-head .role img{width:12px; height:12px; opacity:0.7; border:0; background:none; border-radius:0;}
+
+  /* Colour legend for the board, generated from the table that draws it. */
+  .legend{display:flex; flex-wrap:wrap; gap:5px 14px; margin-top:10px; font-family:'Chakra Petch',sans-serif;
+          font-size:9.5px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-dim);}
+  .legend i{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:-1px;}
 
   .saved{display:flex; flex-direction:column; gap:4px; max-height:170px; overflow-y:auto;}
 
@@ -271,18 +302,25 @@
             </marker>
           </defs>
           <image id="mapImg" x="0" y="0" width="1000" height="1000" crossorigin="anonymous"/>
+          <!-- Dims the minimap so utility reads on top of it. The published
+               minimaps are mid-grey, which is exactly the colour of a smoke. -->
+          <rect id="mapShade" x="0" y="0" width="1000" height="1000" fill="#05080B" opacity="0.45"/>
           <g id="calloutLayer"></g>
           <g id="objLayer"></g>
           <g id="selLayer"></g>
         </svg>
         <div class="maphint" id="mapHint">select a map</div>
       </div>
+      <div class="legend" id="legend"></div>
       <div class="hintbar">
         <b>Drag</b> an agent or ability straight from the right-hand panel onto the map — or click one
         to arm it, then click the map. <b>Select</b> tool: drag to move, <b>Delete</b> removes.<br>
         Areas are drawn at true in-game scale. Radial abilities are <b>fixed</b> and cannot be resized.
         Lines and walls are aimed by dragging the handle; length only changes for abilities the game
         actually lets you vary (Fault Line's charge, Viper's wall), and never beyond their real maximum.
+        Walls that are steered in the game (Harbor's, Phoenix's) are <b>steered</b> here too: drag out from
+        the agent and the wall follows your hand, rounding off any corner tighter than the game can turn and
+        stopping at the game's length. Let go early to stop it short.
       </div>
     </div>
 
@@ -293,6 +331,7 @@
       <div class="kit">
         <div class="kit-head" id="kitHead"></div>
         <div class="abilrow" id="abilRow"></div>
+        <div class="kit-detail" id="kitDetail"></div>
         <div class="kit-empty" id="kitEmpty">Pick an agent to see their kit. Drag an agent or
           ability straight onto the map, or click to arm it.</div>
       </div>
@@ -352,24 +391,71 @@ const DEFAULT_WALL_WIDTH_M  = 1.0;
 const DEFAULT_CONE_RANGE_M  = 18;
 const DEFAULT_CONE_DEGREES  = 60;
 
-// Tints by role, so a plan reads at a glance: grey blocks vision, red hurts,
-// cyan reveals, amber controls movement.
-const AOE_TINT = {
-  smoke:   '#9AA7B4',
-  damage:  '#FF3B4E',
-  scan:    '#4DE8D8',
-  control: '#FFB020',
+// How each class of ability draws, so a plan reads at a glance: what it *does*
+// sets the colour; who threw it is on the puck. Fill and stroke are opacities.
+//
+// Smokes and walls are near-opaque because they are opaque in the game. The
+// first version drew them as a 16% grey disc over a grey minimap, and you
+// could not find a smoke on the board without clicking it. Reveals and
+// movement are dashed because they are not a physical thing on the ground.
+const AOE_STYLE = {
+  smoke:   { label:'smoke',       tint:'#D3DBE3', fill:0.55, stroke:0.95 },
+  wall:    { label:'wall',        tint:'#D3DBE3', fill:0.70, stroke:1.0  },
+  damage:  { label:'damage',      tint:'#FF5A3C', fill:0.32, stroke:0.95 },
+  flash:   { label:'flash',       tint:'#FFE066', fill:0.30, stroke:0.95 },
+  scan:    { label:'reveal',      tint:'#4DE8D8', fill:0.14, stroke:0.9, dash:'6 4' },
+  control: { label:'slow / stun', tint:'#FFB020', fill:0.28, stroke:0.95 },
+  trap:    { label:'trap',        tint:'#FF3B4E', fill:0.20, stroke:0.95, dash:'2 3' },
+  heal:    { label:'heal / buff', tint:'#8FD14F', fill:0.22, stroke:0.9  },
+  move:    { label:'movement',    tint:'#B388FF', fill:0.12, stroke:0.85, dash:'3 4' },
 };
+// Saved strategies carry whatever kind they were given at the time, so an
+// unknown one falls back to something visible rather than breaking the render.
+const aoeStyle = kind => AOE_STYLE[kind] || AOE_STYLE.control;
 
 const normKey = s => String(s).toLowerCase().replace(/\s+/g,' ').trim();
 
+// First match wins, so the order is the argument: a wall that also burns
+// (Blaze) is drawn as a wall because that is what you place it *for*; a trap
+// that also slows is a trap; a sensor that also concusses is a sensor.
+const KIND_RULES = [
+  ['wall',    ['wall']],
+  ['trap',    ['trap']],
+  ['smoke',   ['smoke','vision_block']],
+  ['damage',  ['damage','fire']],
+  ['flash',   ['flash']],
+  ['scan',    ['reveal','detection','camera','suppress','suppression']],
+  ['control', ['concuss','slow','nearsight','detain','pull','vulnerable','decay',
+               'knockup','knockback','deafen','weapon_disable','capture']],
+  ['heal',    ['heal','revive','ally_buff','combat_stim','self_buff','shield','buff']],
+  ['move',    ['teleport','movement']],
+];
+
 function kindFromTags(tags){
   const t = new Set(tags || []);
-  if (t.has('smoke') || t.has('vision_block')) return 'smoke';
-  if (t.has('damage') || t.has('fire')) return 'damage';
-  if (t.has('reveal') || t.has('detection') || t.has('suppress') || t.has('suppression')) return 'scan';
+  for (const [kind, any] of KIND_RULES)
+    if (any.some(x => t.has(x))) return kind;
   return 'control';
 }
+
+// The agent's own colour, from valorant-api's background gradient. It is a
+// dark, saturated tone — exactly right behind a white ability glyph — and it
+// is what tells a Viper smoke from an Omen smoke at a glance.
+function agentTint(agent){
+  const c = agent && agent.backgroundGradientColors && agent.backgroundGradientColors[0];
+  return c ? '#' + String(c).slice(0, 6) : null;
+}
+
+// A chevron at the far end of anything thrown or fired, so direction survives
+// onto the exported PNG, where there are no handles to read it from.
+function arrowHeadPath(ex, ey, angleDeg, s){
+  const a = angleDeg * Math.PI/180, ca = Math.cos(a), sa = Math.sin(a);
+  const bx = ex - s*ca, by = ey - s*sa;
+  const px = -sa*s*0.55, py = ca*s*0.55;
+  return `M ${ex} ${ey} L ${bx+px} ${by+py} L ${bx-px} ${by-py} Z`;
+}
+// Walls stand where they are put; everything else travels from the caster.
+const travels = aoe => aoe.kind !== 'wall' && aoe.kind !== 'smoke';
 
 async function loadAbilityData(){
   const res = await fetch('data/valorant_abilities.json');
@@ -437,12 +523,37 @@ function aoeFor(agentName, abilityName){
     return { shape:'mesh', arm: rec.arm_length_m || rec.length_m || 10,
              arms: rec.arms || 4, angle: 0, lenFixed: true, ...common };
   }
-  // Curved flight paths. Riot documents no curve geometry, so rather than
-  // inventing an arc the planner gives two handles and lets you draw the path
-  // you actually intend to throw.
+  // Anything steered while it travels — High Tide, Blaze, Prowler, Guiding
+  // Light — is a *path*, not a shape. In the game the projectile leaves the
+  // caster straight ahead and turns towards the crosshair at a bounded rate;
+  // the wall (or trail) is simply wherever it went, which can be an S, a hook,
+  // or a full U-turn. So the planner steers it the same way: drag the tip and
+  // the path follows the pointer out from the caster, never turning tighter
+  // than the game allows and never running longer than its distance. See
+  // steerPath. Length is the path's arc, which is what the game measures.
+  if (rec.curvable && rec.length_m){
+    const minLen = rec.min_length_m || null;
+    // Degrees per metre of travel: 180°/s at 25 m/s is 7.2°/m, a tightest
+    // turn of about 8 m radius. Unknown for some, which means unlimited.
+    const turn = (rec.turn_rate_deg_s && rec.speed_m_s)
+      ? rec.turn_rate_deg_s / rec.speed_m_s : null;
+    return { shape:'path', wid: rec.width_m || DEFAULT_WALL_WIDTH_M,
+             maxLen: rec.length_m, minLen, lenFixed: !minLen, turn,
+             pts: [[0, 0], [rec.length_m, 0]], heading: 0, angle: 0, ...common };
+  }
+
+  // Curved flight paths with no documented steering: two handles, draw the
+  // path you intend. Kept for strategies saved before steering existed.
   if (rec.shape === 'curve'){
     return { shape:'curve', len: rec.length_m || 20, wid: rec.width_m || 2,
              angle: 0, bend: 6, ...common };
+  }
+
+  // A wall with no end: Cosmic Divide runs through the whole map along the
+  // line you pick. Aimable, never sized.
+  if ((rec.shape === 'wall' || rec.shape === 'line') && rec.infinite){
+    return { shape:'infline', wid: rec.width_m || DEFAULT_WALL_WIDTH_M, angle: 0,
+             lenFixed: true, ...common };
   }
 
   // line | wall. Aiming is always the player's call, but length is not:
@@ -462,6 +573,10 @@ function aoeFor(agentName, abilityName){
     maxLen,
     minLen,
     lenFixed: !minLen,
+    // Where the area starts, in metres along the aim from the puck. Fault Line
+    // and Rolling Thunder spawn 8 m in front of Breach; Fast Lane starts just
+    // behind Neon. Zero for anything cast at the feet.
+    off: rec.offset_m || 0,
     angle: 0,
     ...common
   };
@@ -489,6 +604,108 @@ function meshArms(o){
   return out;
 }
 
+// Arc length of the planner's quadratic curve, in metres: chord `len` with the
+// control point pushed `bend` metres off its midpoint. Sampled rather than
+// closed-form because the closed form is longer than the sampling and no more
+// accurate at the precision a minimap can show.
+function arcLenM(len, bend){
+  const N = 48;
+  let prev = [0, 0], total = 0;
+  for (let i = 1; i <= N; i++){
+    const t = i / N, u = 1 - t;
+    const x = 2*u*t*(len/2) + t*t*len;
+    const y = 2*u*t*bend;
+    total += Math.hypot(x - prev[0], y - prev[1]);
+    prev = [x, y];
+  }
+  return total;
+}
+
+// The chord that gives an arc of `target` metres at this bend. Monotonic in
+// the chord, so a bisection is enough.
+function chordForArc(target, bend){
+  let lo = 0, hi = target;
+  for (let i = 0; i < 30; i++){
+    const mid = (lo + hi) / 2;
+    if (arcLenM(mid, bend) < target) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+// Keep a capped curve honest after either handle moves: a fixed-length wall's
+// arc is always exactly its maximum, a variable one's never more than it.
+function fitCurveLength(A){
+  if (A.shape !== 'curve' || !A.maxLen) return;
+  // Even a zero chord has an arc of |bend|, so the bend itself is bounded.
+  const maxBend = A.maxLen * 0.8;
+  A.bend = Math.max(-maxBend, Math.min(maxBend, A.bend || 0));
+  const chordAtMax = chordForArc(A.maxLen, A.bend);
+  if (A.lenFixed) A.len = chordAtMax;
+  else A.len = Math.min(chordAtMax, Math.max(A.minLen || 1, A.len));
+}
+
+/* Steered paths: a polyline in metres, relative to the caster. */
+
+function pathArcM(pts){
+  let s = 0;
+  for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0]-pts[i-1][0], pts[i][1]-pts[i-1][1]);
+  return s;
+}
+
+function pathView(o){
+  return o.aoe.pts.map(p => [o.pos[0] + metresToView(p[0]), o.pos[1] + metresToView(p[1])]);
+}
+
+// True once any heading change is more than a degree or so — a straight cast
+// and a nudged one should not both read as "curved".
+function pathIsBent(pts){
+  for (let i = 2; i < pts.length; i++){
+    const a1 = Math.atan2(pts[i-1][1]-pts[i-2][1], pts[i-1][0]-pts[i-2][0]);
+    const a2 = Math.atan2(pts[i][1]-pts[i-1][1], pts[i][0]-pts[i-1][0]);
+    const d = Math.atan2(Math.sin(a2-a1), Math.cos(a2-a1));
+    if (Math.abs(d) > 0.02) return true;
+  }
+  return false;
+}
+
+// Advance the tip by `dist` metres, turning towards `dir` (radians) no faster
+// than the ability can. The pointer's *motion* is the crosshair: the wall goes
+// where your hand goes, and where you draw a corner tighter than the game can
+// turn, it rounds it off. The pointer's position is deliberately not a target
+// to chase — a target inside the turning radius can never be reached, and the
+// water would orbit it until the length ran out.
+function steerPath(A, dir, dist){
+  const STEP = 0.5;                                              // metres
+  const pts = A.pts;
+  const perM = A.turn ? A.turn * Math.PI/180 : Infinity;         // rad per metre
+  let heading = A.heading || 0;
+  let left = Math.min(dist, A.maxLen - pathArcM(pts));
+  while (left > 1e-6){
+    const s = Math.min(STEP, left);
+    const want = Math.atan2(Math.sin(dir - heading), Math.cos(dir - heading));
+    const cap = perM * s;
+    heading += Math.max(-cap, Math.min(cap, want));
+    const tip = pts[pts.length-1];
+    pts.push([tip[0] + s*Math.cos(heading), tip[1] + s*Math.sin(heading)]);
+    left -= s;
+  }
+  A.heading = heading;
+}
+
+// Letting go: Blaze cannot be stopped early, so whatever length is left runs
+// straight on from the tip; High Tide stops where it is (ALT FIRE), but not
+// shorter than the game's minimum.
+function finishPath(A){
+  const pts = A.pts;
+  const arc = pathArcM(pts);
+  const want = A.lenFixed ? A.maxLen : Math.max(A.minLen || 0, arc);
+  const rest = want - arc;
+  if (rest <= 0.01) return;
+  const tip = pts[pts.length-1];
+  const h = A.heading || 0;
+  pts.push([tip[0] + rest*Math.cos(h), tip[1] + rest*Math.sin(h)]);
+}
+
 function curvePoints(o){
   const a = (o.aoe.angle || 0) * Math.PI/180;
   const L = metresToView(o.aoe.len);
@@ -513,12 +730,27 @@ function describeAoe(aoe){
   const reach = aoe.castRange ? ` · reach ${n(aoe.castRange)} m` : '';
 
   if (aoe.shape === 'range')  return `${tilde}reach ${n(aoe.castRange)} m${dur}`;
+  if (aoe.shape === 'infline') return `${tilde}endless wall · ${n(aoe.wid)} m wide${dur}`;
   if (aoe.shape === 'circle'){
     const core = aoe.inner ? ` (${n(aoe.inner)} m core)` : '';
     return `${tilde}${n(aoe.r)} m radius${core}${dur}${reach}`;
   }
   if (aoe.shape === 'cone')   return `${tilde}${n(aoe.len)} m · ${aoe.deg}° cone${dur}${reach}`;
   if (aoe.shape === 'mesh')   return `${tilde}${aoe.arms}× ${n(aoe.arm)} m walls${dur}${reach}`;
+  if (aoe.shape === 'path'){
+    const arc = pathArcM(aoe.pts);
+    const range = (!aoe.lenFixed && arc < aoe.maxLen - 0.05) ? ` of ${n(aoe.maxLen)}` : '';
+    const bent = pathIsBent(aoe.pts) ? ' · curved' : '';
+    return `${tilde}${n(arc)}${range}×${n(aoe.wid)} m${bent}${dur}${reach}`;
+  }
+  if (aoe.shape === 'curve' && aoe.maxLen){
+    // A steered wall reads like a straight one — length along the wall, then
+    // width — with a note when it is actually bent.
+    const arc = arcLenM(aoe.len, aoe.bend || 0);
+    const range = (!aoe.lenFixed && arc < aoe.maxLen - 0.05) ? ` of ${n(aoe.maxLen)}` : '';
+    const bent = Math.abs(aoe.bend || 0) > 0.05 ? ' · curved' : '';
+    return `${tilde}${n(arc)}${range}×${n(aoe.wid)} m${bent}${dur}${reach}`;
+  }
   if (aoe.shape === 'curve')  return `${tilde}${n(aoe.len)} m path · bend ${n(aoe.bend)} m${dur}${reach}`;
   // For a variable-length wall show where it sits in its range, but only once
   // it is actually short of the maximum — "56 of 56" is noise.
@@ -664,6 +896,7 @@ function render(){
   renderCallouts();
   renderObjects();
   renderSelection();
+  refreshAbilityCounts();
 }
 
 function renderCallouts(){
@@ -731,10 +964,12 @@ function renderObjects(){
 
       // Area of effect first, so the icon sits on top of it.
       if (o.aoe && state.showAoe){
-        const tint = AOE_TINT[o.aoe.kind] || o.color;
         const A = o.aoe;
-        const fill = { fill:tint, 'fill-opacity':0.16, stroke:tint,
-                       'stroke-opacity':0.65, 'stroke-width':2 };
+        const st = aoeStyle(A.kind);
+        const tint = st.tint;
+        const fill = { fill:tint, 'fill-opacity':st.fill, stroke:tint,
+                       'stroke-opacity':st.stroke, 'stroke-width':2,
+                       ...(st.dash ? { 'stroke-dasharray':st.dash } : {}) };
 
         // How far it reaches, drawn dashed and unfilled so it never reads as
         // coverage. This is "where can I put it", not "what does it hit".
@@ -752,16 +987,51 @@ function renderObjects(){
           if (A.inner){
             g.appendChild(svgEl('circle', {
               cx:o.pos[0], cy:o.pos[1], r:metresToView(A.inner),
-              fill:tint, 'fill-opacity':0.22, stroke:tint,
+              fill:tint, 'fill-opacity':Math.min(0.9, st.fill + 0.2), stroke:tint,
               'stroke-opacity':0.5, 'stroke-width':1, 'stroke-dasharray':'3 3'
             }));
           }
         }
         else if (A.shape === 'strip'){
           const L = metresToView(A.len), W = metresToView(A.wid);
+          const OFF = metresToView(A.off || 0);
           g.appendChild(svgEl('rect', {
-            x:o.pos[0], y:o.pos[1]-W/2, width:L, height:W, ...fill,
+            x:o.pos[0] + OFF, y:o.pos[1]-W/2, width:L, height:W, ...fill,
             transform:`rotate(${A.angle||0} ${o.pos[0]} ${o.pos[1]})`
+          }));
+          if (travels(A)){
+            const a = (A.angle||0) * Math.PI/180;
+            const E = OFF + L;
+            g.appendChild(svgEl('path', {
+              d: arrowHeadPath(o.pos[0] + E*Math.cos(a), o.pos[1] + E*Math.sin(a), A.angle||0, 16),
+              fill:tint, 'fill-opacity':0.95
+            }));
+          }
+        }
+        else if (A.shape === 'path'){
+          const pv = pathView(o);
+          g.appendChild(svgEl('polyline', {
+            points: pv.map(p => p[0] + ',' + p[1]).join(' '),
+            fill:'none', stroke:tint, 'stroke-opacity':Math.min(1, st.fill + 0.15),
+            'stroke-width':Math.max(4, metresToView(A.wid)),
+            'stroke-linecap':'round', 'stroke-linejoin':'round'
+          }));
+          if (travels(A) && pv.length > 1){
+            const a = pv[pv.length-1], b = pv[pv.length-2];
+            const tan = Math.atan2(a[1]-b[1], a[0]-b[0]) * 180/Math.PI;
+            g.appendChild(svgEl('path', {
+              d: arrowHeadPath(a[0], a[1], tan, 16), fill:tint, 'fill-opacity':0.95
+            }));
+          }
+        }
+        else if (A.shape === 'infline'){
+          // Far past the board on both sides; the SVG clips it.
+          const a = (A.angle||0) * Math.PI/180, R = 3000;
+          g.appendChild(svgEl('line', {
+            x1:o.pos[0] - R*Math.cos(a), y1:o.pos[1] - R*Math.sin(a),
+            x2:o.pos[0] + R*Math.cos(a), y2:o.pos[1] + R*Math.sin(a),
+            stroke:tint, 'stroke-opacity':Math.min(1, st.fill + 0.15),
+            'stroke-width':Math.max(3, metresToView(A.wid)), 'stroke-linecap':'round'
           }));
         }
         else if (A.shape === 'cone'){
@@ -774,7 +1044,7 @@ function renderObjects(){
           for (const end of meshArms(o)){
             g.appendChild(svgEl('line', {
               x1:o.pos[0], y1:o.pos[1], x2:end[0], y2:end[1],
-              stroke:tint, 'stroke-opacity':0.8,
+              stroke:tint, 'stroke-opacity':st.stroke,
               'stroke-width':Math.max(3, metresToView(0.6)), 'stroke-linecap':'round'
             }));
           }
@@ -783,16 +1053,26 @@ function renderObjects(){
           const { end, ctrl } = curvePoints(o);
           g.appendChild(svgEl('path', {
             d:`M ${o.pos[0]} ${o.pos[1]} Q ${ctrl[0]} ${ctrl[1]} ${end[0]} ${end[1]}`,
-            fill:'none', stroke:tint, 'stroke-opacity':0.45,
+            fill:'none', stroke:tint, 'stroke-opacity':Math.max(0.5, st.fill + 0.2),
             'stroke-width':Math.max(4, metresToView(A.wid)), 'stroke-linecap':'round'
           }));
+          // Points along the tangent at the end, not along the throw line.
+          if (travels(A)){
+            const tan = Math.atan2(end[1]-ctrl[1], end[0]-ctrl[0]) * 180/Math.PI;
+            g.appendChild(svgEl('path', {
+              d: arrowHeadPath(end[0], end[1], tan, 16), fill:tint, 'fill-opacity':0.95
+            }));
+          }
         }
         // 'range' draws only the dashed ring above — it has no footprint.
       }
 
+      // Agent colour behind the glyph, the chosen draw colour around it: who
+      // threw it and which plan it belongs to, both at a glance.
       g.appendChild(svgEl('circle', {
         cx:o.pos[0], cy:o.pos[1], r:size/2 + 3,
-        fill:'rgba(5,8,11,0.75)', stroke:o.color, 'stroke-width':2
+        fill:o.agentColor || 'rgba(5,8,11,0.75)', 'fill-opacity':0.95,
+        stroke:o.color, 'stroke-width':2
       }));
       const img = svgEl('image', {
         x:o.pos[0]-size/2, y:o.pos[1]-size/2, width:size, height:size,
@@ -824,17 +1104,22 @@ function renderSelection(){
 
   if (!o.aoe || !state.showAoe) return;
   const h = aoeHandlePos(o);
-  const tint = AOE_TINT[o.aoe.kind] || o.color;
+  const tint = aoeStyle(o.aoe.kind).tint;
   const locked = aoeLocked(o.aoe);
 
   // Only aimable areas get a handle. Fixed ones still show their size — you want
   // to read a smoke's radius, you just must not be able to invent a bigger one.
   if (!locked){
-    layer.appendChild(svgEl('line', {
-      x1:o.pos[0], y1:o.pos[1], x2:h.x, y2:h.y,
-      stroke:tint, 'stroke-opacity':0.5, 'stroke-width':1.5, 'stroke-dasharray':'4 3'
-    }));
-    const dot = svgEl('circle', { cx:h.x, cy:h.y, r:9, fill:tint, stroke:'#05080B', 'stroke-width':2 });
+    // A steered path is its own guide; a straight line to its tip would lie.
+    if (o.aoe.shape !== 'path'){
+      layer.appendChild(svgEl('line', {
+        x1:o.pos[0], y1:o.pos[1], x2:h.x, y2:h.y,
+        stroke:tint, 'stroke-opacity':0.5, 'stroke-width':1.5, 'stroke-dasharray':'4 3'
+      }));
+    }
+    // The steering grip is the whole control for a path, so it gets a bigger target.
+    const dot = svgEl('circle', { cx:h.x, cy:h.y, r: o.aoe.shape === 'path' ? 12 : 9,
+                                   fill:tint, stroke:'#05080B', 'stroke-width':2 });
     dot.dataset.handle = 'end';
     dot.style.cursor = 'grab';
     layer.appendChild(dot);
@@ -855,13 +1140,20 @@ function renderSelection(){
   }
 
   const label = describeAoe(o.aoe) + (locked ? ' · fixed' : '');
+  const lp = o.aoe.shape === 'path' ? pathTipView(o) : h;
   const t = svgEl('text', {
-    x:h.x + 14, y:h.y + 5, fill:tint,
+    x:lp.x + 14, y:lp.y + 5, fill:tint,
     'font-family':"'JetBrains Mono',monospace", 'font-size':18,
     'paint-order':'stroke', stroke:'#05080B', 'stroke-width':4, 'stroke-linejoin':'round'
   });
   t.textContent = label;
   layer.appendChild(t);
+}
+
+function pathTipView(o){
+  const pv = pathView(o);
+  const t = pv[pv.length-1];
+  return { x: t[0], y: t[1] };
 }
 
 function aoeHandlePos(o){
@@ -876,8 +1168,14 @@ function aoeHandlePos(o){
     const { end } = curvePoints(o);
     return { x: end[0], y: end[1] };
   }
+  if (A.shape === 'path'){
+    // Just outside the puck, on the side the path leaves from.
+    const p = A.pts, h = p.length > 1 ? Math.atan2(p[1][1]-p[0][1], p[1][0]-p[0][0]) : (A.heading || 0);
+    return { x: o.pos[0] + 28*Math.cos(h), y: o.pos[1] + 28*Math.sin(h) };
+  }
   const a = (A.angle || 0) * Math.PI / 180;
-  const L = metresToView(A.len);
+  // An endless wall has no end to hold, so its handle sits a fixed way out.
+  const L = A.shape === 'infline' ? 120 : metresToView(A.len + (A.off || 0));
   return { x: o.pos[0] + L*Math.cos(a), y: o.pos[1] + L*Math.sin(a) };
 }
 
@@ -935,7 +1233,8 @@ function overBoard(cx, cy){
 
 function placeAbilityAt(agentName, ability, vx, vy){
   const o = { id:nextId(), type:'util', pos:[vx,vy],
-              icon:ability.icon, name:ability.name, color:state.color };
+              icon:ability.icon, name:ability.name, agent:agentName,
+              agentColor:ability.agentColor || null, color:state.color };
   const aoe = aoeFor(agentName, ability.name);
   if (aoe) o.aoe = aoe;
   state.objects.push(o);
@@ -945,7 +1244,8 @@ function placeAbilityAt(agentName, ability, vx, vy){
 
 function placeAgentAt(agent, vx, vy){
   const o = { id:nextId(), type:'agent', pos:[vx,vy],
-              icon:agent.displayIcon, name:agent.displayName, color:state.color };
+              icon:agent.displayIcon, name:agent.displayName,
+              agentColor:agentTint(agent), color:state.color };
   state.objects.push(o);
   state.selectedId = o.id;
   return o;
@@ -954,7 +1254,7 @@ function placeAgentAt(agent, vx, vy){
 function announcePlaced(o){
   setStatus(!o.aoe ? ''
     : aoeLocked(o.aoe) ? `${describeAoe(o.aoe)} · fixed size · Delete to remove`
-    : `${describeAoe(o.aoe)} · drag the handle to aim · Delete to remove`);
+    : `${describeAoe(o.aoe)} · ${o.aoe.shape === "path" ? "drag out from the agent to steer" : "drag the handle to aim"} · Delete to remove`);
 }
 
 /* ---- dragging straight out of the palette onto the board -------------------
@@ -1055,9 +1355,11 @@ function onPointerDown(evt){
     const sel = state.objects.find(x => x.id === state.selectedId);
     if (sel && !aoeLocked(sel.aoe)){
       pushHistory();
-      // 'end' aims (and sizes, where allowed); 'bend' curves the path.
-      drag = { mode: evt.target.dataset.handle === 'bend' ? 'bend' : 'aoe',
-               id: state.selectedId };
+      // 'end' aims (and sizes, where allowed); 'bend' curves the old-style
+      // path; the tip of a steered path re-casts it from the caster.
+      const mode = sel.aoe.shape === 'path' ? 'steer'
+                 : evt.target.dataset.handle === 'bend' ? 'bend' : 'aoe';
+      drag = { mode, id: state.selectedId, moved:false, last:p };
     }
     return;
   }
@@ -1170,11 +1472,32 @@ function onPointerMove(evt){
     // Length only where the game actually lets you vary it, and then only
     // within the real range — never longer than the ability reaches.
     if (!o.aoe.lenFixed){
-      const metres = viewToMetres(Math.hypot(dx, dy));
+      // The handle sits at the far end of the area, which starts `off` metres
+      // out — so the pointer distance includes the gap.
+      const metres = viewToMetres(Math.hypot(dx, dy)) - (o.aoe.off || 0);
       o.aoe.len = o.aoe.maxLen
         ? Math.min(o.aoe.maxLen, Math.max(o.aoe.minLen || 1, metres))
-        : Math.max(1, metres);     // curves have no documented maximum
+        : Math.max(1, metres);     // free curves have no documented maximum
     }
+    fitCurveLength(o.aoe);         // a bent wall's cap is on its arc, not its chord
+    render();
+  }
+  else if (drag.mode === 'steer'){
+    const A = o.aoe;
+    const mx = p.x - drag.last.x, my = p.y - drag.last.y;
+    if (!drag.moved){
+      // The first pull is the cast: the projectile leaves the caster in the
+      // direction you pull. A few units of dead zone so a twitch does not
+      // decide the aim.
+      if (Math.hypot(mx, my) < 6) return;
+      drag.moved = true;
+      A.pts = [[0, 0]];
+      A.heading = Math.atan2(my, mx);
+    }
+    const dist = viewToMetres(Math.hypot(mx, my));
+    if (dist < 0.2) return;            // let tiny moves accumulate
+    steerPath(A, Math.atan2(my, mx), dist);
+    drag.last = p;
     render();
   }
   else if (drag.mode === 'bend'){
@@ -1184,6 +1507,7 @@ function onPointerMove(evt){
     const mid = [o.pos[0] + L*Math.cos(a)/2, o.pos[1] + L*Math.sin(a)/2];
     const px = Math.cos(a + Math.PI/2), py = Math.sin(a + Math.PI/2);
     o.aoe.bend = viewToMetres((p.x - mid[0])*px + (p.y - mid[1])*py);
+    fitCurveLength(o.aoe);
     render();
   }
   else if (drag.mode === 'move'){
@@ -1202,6 +1526,10 @@ function translate(o, dx, dy){
 }
 
 function onPointerUp(evt){
+  if (drag && drag.mode === 'steer' && drag.moved){
+    const o = state.objects.find(x => x.id === drag.id);
+    if (o){ finishPath(o.aoe); render(); }
+  }
   if (drag && drag.mode === 'seg'){
     const o = state.objects.find(x => x.id === drag.id);
     // A click with no drag leaves a zero-length segment that is invisible but
@@ -1258,6 +1586,64 @@ function renderAgents(){
 // valorant-api names the slots by internal role; players think in keybinds.
 const SLOT_KEY = { Grenade:'C', Ability1:'Q', Ability2:'E', Ultimate:'X' };
 
+// What a placed piece of utility needs to know about where it came from.
+const abilityPayload = (a, ab) => ({
+  icon: ab.displayIcon, name: ab.displayName, agent: a.displayName, agentColor: agentTint(a),
+});
+
+function armedAbility(a){
+  if (!state.ability || !a) return null;
+  return (a.abilities || []).find(ab => ab.displayName === state.ability.name) || null;
+}
+
+/** The detail card under the kit: what the ability does, in numbers first. */
+function showKitDetail(a, ab){
+  const box = $('kitDetail');
+  if (!a){ box.style.display = 'none'; return; }
+  box.style.display = '';
+  if (!ab){
+    box.innerHTML = '<div class="kd-empty">Hover an ability for what it does and how far it ' +
+                    'reaches. Click to arm it, or drag it straight onto the map.</div>';
+    return;
+  }
+  const rec = abilityRecord(a.displayName, ab.displayName);
+  const aoe = aoeFor(a.displayName, ab.displayName);
+  const st = aoe ? aoeStyle(aoe.kind) : null;
+
+  // Size, duration and reach come from describeAoe so the card can never
+  // disagree with the readout on the board; the rest is the dataset's own.
+  const facts = aoe ? describeAoe(aoe).split(' · ') : ['no map area'];
+  if (rec){
+    if (!aoe && rec.duration_s)   facts.push(`${rec.duration_s} s`);
+    if (rec.damage)               facts.push(`${rec.damage} dmg`);
+    if (rec.damage_per_second)    facts.push(`${rec.damage_per_second} dps`);
+    if (rec.slow_percent)         facts.push(`${rec.slow_percent}% slow`);
+    if (rec.effect_duration_s)    facts.push(`${rec.effect_duration_s} s effect`);
+  }
+  const tags = rec ? (rec.tags || []).filter(t => t !== 'aoe' && t !== 'ultimate') : [];
+
+  box.innerHTML =
+    `<div class="kd-name"><span class="key">${SLOT_KEY[ab.slot] || '·'}</span>` +
+    `<span>${escapeHtml(ab.displayName)}</span>` +
+    (st ? `<span class="kind" style="color:${st.tint}">${escapeHtml(st.label)}</span>` : '') +
+    `</div><div class="facts">` +
+    facts.map(f => `<span class="fact">${escapeHtml(f)}</span>`).join('') +
+    tags.map(t => `<span class="fact tag">${escapeHtml(t.replace(/_/g, ' '))}</span>`).join('') +
+    `</div><p class="kd-desc">${escapeHtml(ab.description || '')}</p>`;
+}
+
+// Badges on the tiles: how many of each are already placed. Runs on every
+// render, so it only touches text — rebuilding the tiles would drop a drag.
+function refreshAbilityCounts(){
+  const counts = {};
+  for (const o of state.objects)
+    if (o.type === 'util') counts[o.icon] = (counts[o.icon] || 0) + 1;
+  for (const el of document.querySelectorAll('.abil .ct')){
+    const c = counts[el.dataset.icon] || 0;
+    el.textContent = c ? `×${c}` : '';
+  }
+}
+
 function renderAbilities(){
   const row = $('abilRow');
   const head = $('kitHead');
@@ -1268,6 +1654,7 @@ function renderAbilities(){
   const a = state.agent;
   if (!a){
     empty.style.display = '';
+    showKitDetail(null, null);
     return;
   }
   empty.style.display = 'none';
@@ -1280,7 +1667,13 @@ function renderAbilities(){
   const who = document.createElement('div');
   who.className = 'who'; who.textContent = a.displayName;
   const role = document.createElement('div');
-  role.className = 'role'; role.textContent = (a.role && a.role.displayName) || '';
+  role.className = 'role';
+  if (a.role && a.role.displayIcon){
+    const ri = document.createElement('img');
+    ri.src = a.role.displayIcon; ri.alt = ''; ri.draggable = false;
+    role.appendChild(ri);
+  }
+  role.appendChild(document.createTextNode((a.role && a.role.displayName) || ''));
   meta.appendChild(who); meta.appendChild(role);
   head.appendChild(meta);
 
@@ -1297,6 +1690,10 @@ function renderAbilities(){
     key.className = 'k'; key.textContent = SLOT_KEY[ab.slot] || '·';
     d.appendChild(key);
 
+    const ct = document.createElement('div');
+    ct.className = 'ct'; ct.dataset.icon = ab.displayIcon;
+    d.appendChild(ct);
+
     const img = document.createElement('img');
     img.src = ab.displayIcon;
     img.alt = ab.displayName;
@@ -1312,13 +1709,23 @@ function renderAbilities(){
     const aoe = aoeFor(a.displayName, ab.displayName);
     const sz = document.createElement('div');
     sz.className = 'sz';
-    sz.textContent = aoe ? describeAoe(aoe).split(' · ')[0] : '';
+    if (aoe){
+      const st = aoeStyle(aoe.kind);
+      const dot = document.createElement('i');
+      dot.style.background = st.tint;
+      sz.style.color = st.tint;
+      sz.appendChild(dot);
+      // Just the number on the tile; the card below says what it is the radius of.
+      sz.appendChild(document.createTextNode(describeAoe(aoe).split(' · ')[0].replace(' radius', '')));
+    } else {
+      sz.style.color = 'var(--ink-dim)';
+      sz.textContent = 'no area';
+    }
     d.appendChild(sz);
+    d.onpointerenter = () => showKitDetail(a, ab);
     d.onpointerdown = e => {
       e.stopPropagation();
-      startPaletteDrag(e, 'ability',
-        { icon: ab.displayIcon, name: ab.displayName, agent: a.displayName },
-        ab.displayIcon);
+      startPaletteDrag(e, 'ability', abilityPayload(a, ab), ab.displayIcon);
     };
     d.onclick = (e) => {
       e.stopPropagation();
@@ -1327,7 +1734,7 @@ function renderAbilities(){
       if (armedSame){
         state.ability = null; state.armed = null;
       } else {
-        state.ability = { icon: ab.displayIcon, name: ab.displayName, agent: a.displayName };
+        state.ability = abilityPayload(a, ab);
         state.armed = 'ability';
       }
       renderAbilities();
@@ -1337,6 +1744,10 @@ function renderAbilities(){
     };
     row.appendChild(d);
   }
+  // Off the tiles, the card falls back to whatever is armed.
+  row.onpointerleave = () => showKitDetail(a, armedAbility(a));
+  showKitDetail(a, armedAbility(a));
+  refreshAbilityCounts();
 }
 
 /* -------------------------------------------------------------- persistence */
@@ -1442,11 +1853,14 @@ async function exportPng(){
     const base = await loadImg(state.map.displayIcon);
     ctx.drawImage(base, 0, 0, S, S);
   } catch { /* keep going; the shapes still carry the plan */ }
+  // Same dimming as the board, or the export would not match what was drawn.
+  ctx.fillStyle = 'rgba(5,8,11,0.45)';
+  ctx.fillRect(0, 0, S, S);
 
   if (state.showCallouts && state.map.callouts){
     ctx.font = `${13*k}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(232,236,239,0.55)';
+    ctx.fillStyle = 'rgba(232,236,239,0.82)';
     ctx.strokeStyle = '#05080B';
     ctx.lineWidth = 3*k;
     for (const c of state.map.callouts){
@@ -1494,11 +1908,12 @@ async function exportPng(){
 
       // Area of effect underneath the icon, matching the on-screen render.
       if (o.aoe && state.showAoe){
-        const tint = AOE_TINT[o.aoe.kind] || o.color;
-        ctx.save();
-        ctx.globalAlpha = 0.16; ctx.fillStyle = tint;
-        ctx.strokeStyle = tint; ctx.lineWidth = 2*k;
         const A = o.aoe, X = o.pos[0]*k, Y = o.pos[1]*k;
+        const st = aoeStyle(A.kind), tint = st.tint;
+        ctx.save();
+        ctx.globalAlpha = st.fill; ctx.fillStyle = tint;
+        ctx.strokeStyle = tint; ctx.lineWidth = 2*k;
+        if (st.dash) ctx.setLineDash(st.dash.split(' ').map(v => Number(v)*k));
 
         // Dashed reach ring, unfilled — matches the on-screen render.
         if (A.castRange){
@@ -1512,9 +1927,9 @@ async function exportPng(){
         if (A.shape === 'circle'){
           ctx.beginPath(); ctx.arc(X, Y, metresToView(A.r)*k, 0, Math.PI*2);
           ctx.fill();
-          ctx.globalAlpha = 0.65; ctx.stroke();
+          ctx.globalAlpha = st.stroke; ctx.stroke();
           if (A.inner){
-            ctx.globalAlpha = 0.22;
+            ctx.globalAlpha = Math.min(0.9, st.fill + 0.2);
             ctx.beginPath(); ctx.arc(X, Y, metresToView(A.inner)*k, 0, Math.PI*2);
             ctx.fill();
           }
@@ -1528,10 +1943,10 @@ async function exportPng(){
           ctx.arc(X, Y, L, a-half, a+half);
           ctx.closePath();
           ctx.fill();
-          ctx.globalAlpha = 0.65; ctx.stroke();
+          ctx.globalAlpha = st.stroke; ctx.stroke();
         }
         else if (A.shape === 'mesh'){
-          ctx.globalAlpha = 0.8;
+          ctx.globalAlpha = st.stroke;
           ctx.lineWidth = Math.max(3*k, metresToView(0.6)*k);
           ctx.lineCap = 'round';
           for (const end of meshArms(o)){
@@ -1540,21 +1955,49 @@ async function exportPng(){
         }
         else if (A.shape === 'curve'){
           const { end, ctrl } = curvePoints(o);
-          ctx.globalAlpha = 0.45;
+          ctx.globalAlpha = Math.max(0.5, st.fill + 0.2);
           ctx.lineWidth = Math.max(4*k, metresToView(A.wid)*k);
           ctx.lineCap = 'round';
           ctx.beginPath();
           ctx.moveTo(X, Y);
           ctx.quadraticCurveTo(ctrl[0]*k, ctrl[1]*k, end[0]*k, end[1]*k);
           ctx.stroke();
+          if (travels(A)) fillArrow(ctx, end[0]*k, end[1]*k,
+                    Math.atan2(end[1]-ctrl[1], end[0]-ctrl[0]) * 180/Math.PI, 16*k, tint);
         }
         else if (A.shape === 'strip'){
           const L = metresToView(A.len)*k, W = metresToView(A.wid)*k;
+          const OFF = metresToView(A.off || 0)*k;
           ctx.translate(X, Y);
           ctx.rotate((A.angle||0) * Math.PI/180);
-          ctx.beginPath(); ctx.rect(0, -W/2, L, W);
+          ctx.beginPath(); ctx.rect(OFF, -W/2, L, W);
           ctx.fill();
-          ctx.globalAlpha = 0.65; ctx.stroke();
+          ctx.globalAlpha = st.stroke; ctx.stroke();
+          // Already rotated into the strip's frame, so the arrow points at +x.
+          if (travels(A)) fillArrow(ctx, OFF + L, 0, 0, 16*k, tint);
+        }
+        else if (A.shape === 'path'){
+          const pv = pathView(o);
+          ctx.globalAlpha = Math.min(1, st.fill + 0.15);
+          ctx.lineWidth = Math.max(4*k, metresToView(A.wid)*k);
+          ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+          ctx.beginPath();
+          pv.forEach((p, i) => i ? ctx.lineTo(p[0]*k, p[1]*k) : ctx.moveTo(p[0]*k, p[1]*k));
+          ctx.stroke();
+          if (travels(A) && pv.length > 1){
+            const a = pv[pv.length-1], b = pv[pv.length-2];
+            fillArrow(ctx, a[0]*k, a[1]*k, Math.atan2(a[1]-b[1], a[0]-b[0]) * 180/Math.PI, 16*k, tint);
+          }
+        }
+        else if (A.shape === 'infline'){
+          const a = (A.angle||0) * Math.PI/180, R = 3000*k;
+          ctx.globalAlpha = Math.min(1, st.fill + 0.15);
+          ctx.lineWidth = Math.max(3*k, metresToView(A.wid)*k);
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(X - R*Math.cos(a), Y - R*Math.sin(a));
+          ctx.lineTo(X + R*Math.cos(a), Y + R*Math.sin(a));
+          ctx.stroke();
         }
         // 'range' has no footprint beyond the ring drawn above.
         ctx.restore();
@@ -1562,7 +2005,7 @@ async function exportPng(){
 
       ctx.beginPath();
       ctx.arc(o.pos[0]*k, o.pos[1]*k, size/2 + 3*k, 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(5,8,11,0.75)'; ctx.fill();
+      ctx.fillStyle = o.agentColor || 'rgba(5,8,11,0.75)'; ctx.fill();
       ctx.strokeStyle = o.color; ctx.lineWidth = 2*k; ctx.stroke();
       try {
         const im = await loadImg(o.icon);
@@ -1583,6 +2026,19 @@ async function exportPng(){
     // Tainted canvas: an icon host did not send CORS headers.
     setStatus('could not export png (image CORS blocked)', true);
   }
+}
+
+// Canvas twin of arrowHeadPath, for the utility chevrons.
+function fillArrow(ctx, ex, ey, angleDeg, s, tint){
+  const a = angleDeg * Math.PI/180, ca = Math.cos(a), sa = Math.sin(a);
+  const bx = ex - s*ca, by = ey - s*sa;
+  const px = -sa*s*0.55, py = ca*s*0.55;
+  ctx.save();
+  ctx.setLineDash([]); ctx.globalAlpha = 0.95; ctx.fillStyle = tint;
+  ctx.beginPath();
+  ctx.moveTo(ex, ey); ctx.lineTo(bx+px, by+py); ctx.lineTo(bx-px, by-py);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
 }
 
 function drawArrowHead(ctx, o, k){
@@ -1623,6 +2079,19 @@ function selectMap(uuid, keepObjects){
     state.currentId = null;
   }
   render(); refreshUndoButtons();
+}
+
+function buildLegend(){
+  const box = $('legend');
+  box.innerHTML = '';
+  for (const st of Object.values(AOE_STYLE)){
+    const s = document.createElement('span');
+    const i = document.createElement('i');
+    i.style.background = st.tint;
+    s.appendChild(i);
+    s.appendChild(document.createTextNode(st.label));
+    box.appendChild(s);
+  }
 }
 
 function buildSwatches(){
@@ -1710,6 +2179,7 @@ function wire(){
 
 async function init(){
   buildSwatches();
+  buildLegend();
   wire();
   renderSaved();
   refreshUndoButtons();
