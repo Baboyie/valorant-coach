@@ -47,8 +47,14 @@ git push -u origin main
 ### 2. Create the database
 
 In the Vercel dashboard: **Storage → Create Database → Neon Postgres**. Connect
-it to the project. Vercel injects `POSTGRES_URL` itself — that variable is the
-switch that moves the app onto the database, so nothing else needs setting.
+it to the project. Vercel injects the connection string itself — that variable
+is the switch that moves the app onto the database, so nothing else needs
+setting.
+
+Which name it arrives under depends on which integration you get:
+`POSTGRES_URL` from the older Vercel Postgres one, `DATABASE_URL` from the
+Neon marketplace one. Both are read, in that order, so either works and you do
+not have to care which you were given.
 
 Tables are created on first use. There is no migration step to remember.
 
@@ -65,7 +71,21 @@ mid-review.
 
 On a LAN, unauthenticated is the right default. On a public URL it means anyone
 who finds the address can post or delete your team's review, so **the server
-refuses to start** in production without it.
+refuses to serve** in production without it.
+
+What that refusal looks like depends on where it runs. Started directly it exits
+with the reason on stderr. Imported by Vercel it must not exit — that would be a
+platform-level crash with no response body, and the reason would exist only in a
+runtime log — so every route answers `503` with the variable named instead:
+
+```json
+{ "ok": false,
+  "error": "DEBRIEF is not configured for production and is serving nothing.",
+  "problems": [ { "variable": "GOOGLE_CLIENT_ID", "problem": "…", "fix": "…" } ] }
+```
+
+So a deployment that comes up wrong says so to `curl`, rather than returning
+`FUNCTION_INVOCATION_FAILED` and leaving you to guess.
 
 1. Create an OAuth client at
    <https://console.cloud.google.com/apis/credentials> → *Web application*.
@@ -109,11 +129,19 @@ curl https://your-app.vercel.app/api/health
 ```
 
 ```json
-{ "ok": true, "store": "postgres", "auth": true }
+{ "ok": true, "store": "postgres", "auth": true, "blob": true, "allowed": 5 }
 ```
 
 The check runs a real query rather than returning 200, because a bad connection
 string produces a site that looks perfect until the first save.
+
+`allowed` is how many emails are on the allowlist, and `0` with `auth: true`
+is the trap worth knowing about: sign-in is on and nobody is permitted, so the
+first person to try — you — is rejected with a message naming their own address,
+which reads as *wrong Google account* rather than *unset variable*. Anything
+survivable like that comes back in `warnings` with `ok` still true, because a
+health check that failed over a missing scoreboard token would take the whole
+deployment down to report something one variable fixes.
 
 ## How it is wired
 
@@ -124,6 +152,10 @@ Node.
 
 `server.js` only calls `listen()` when it is the entry point, so the same file
 is a normal server locally and a module in production.
+
+`.vercelignore` keeps the recorder out of the upload: the Rust tree, the
+benchmark CSVs and the design comps are the bulk of this repository and none of
+it runs on Linux.
 
 **Do not replace the rewrite with an `api/[...path].js` catch-all.** That was
 the first attempt and it shipped broken: Vercel matched it as a *single*
@@ -169,4 +201,6 @@ npm test
 
 Covers the things that fail quietly: forged and expired session cookies, ids
 that try to escape their directory, YouTube links in every form people paste,
-and a full round-trip through the storage layer.
+and a full round-trip through the storage layer. Also the two failures this page
+is about — a production deployment that comes up misconfigured, and a database
+that is not there yet on the first query.

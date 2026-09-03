@@ -91,6 +91,18 @@ async function ensureSchema() {
     )`;
     await q`CREATE INDEX IF NOT EXISTS shots_match_idx ON shots (match_id, added_utc)`;
   })();
+
+  // A failure must not be remembered. Neon's free compute suspends after five
+  // minutes idle, so the first query from an instance that has been sitting
+  // quiet is exactly the one that can fail while the database wakes — and a
+  // rejected promise left in `ready` would answer every later request from
+  // that instance with the same error for as long as it lives, while other
+  // instances served fine. "Broken for some people, some of the time" is the
+  // hardest kind of failure to chase, and one line avoids it.
+  //
+  // The derived promise is caught here so the reset is not itself an unhandled
+  // rejection; callers still await `ready` and see the original error.
+  ready.catch(() => { ready = null; });
   return ready;
 }
 

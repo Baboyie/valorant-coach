@@ -8,45 +8,69 @@ const auth = require('./auth');
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
+
+// Configuration production cannot run without.
+//
+// Unauthenticated is the right default on a trusted LAN and a liability the
+// moment the app has a public URL: anyone who finds it could post or delete a
+// team's review. Rather than trust whoever deploys it to remember, production
+// has to be configured or it serves nothing at all.
+//
+// DEBRIEF_ALLOW_OPEN=1 is the escape hatch for a private network deployment
+// that genuinely wants no sign-in.
+//
+// The session secret is checked for a related reason: without a fixed one each
+// serverless instance signs with its own, so a cookie minted by one is rejected
+// by the next and people are logged out at random — a bug that reads as
+// flakiness rather than as misconfiguration.
+function productionProblems() {
+  if (process.env.NODE_ENV !== 'production') return [];
+  const problems = [];
+  if (!auth.config().enabled && process.env.DEBRIEF_ALLOW_OPEN !== '1') {
+    problems.push({
+      variable: 'GOOGLE_CLIENT_ID',
+      problem: 'Sign-in is not configured, so anyone who found this URL could post or delete your team\'s review.',
+      fix: 'Set GOOGLE_CLIENT_ID and DEBRIEF_ALLOWED_EMAILS (see .env.example), or set DEBRIEF_ALLOW_OPEN=1 if this really is a private network.',
+    });
+  }
+  if (auth.config().enabled && !process.env.DEBRIEF_SESSION_SECRET) {
+    problems.push({
+      variable: 'DEBRIEF_SESSION_SECRET',
+      problem: 'Sign-in is on but the session cookie has no fixed signing secret, so sessions would break unpredictably across instances.',
+      fix: 'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"',
+    });
+  }
+  return problems;
+}
+
+const problems = productionProblems();
+if (problems.length) {
+  console.error(
+    '\nDEBRIEF refuses to serve:\n\n' +
+    problems.map((p) => `  ${p.variable}\n    ${p.problem}\n    ${p.fix}\n`).join('\n')
+  );
+  // Run directly, a loud crash is right: someone is watching a terminal.
+  //
+  // Imported by a serverless host it is exactly wrong — exiting during module
+  // init is a platform-level crash with no response body, so every route
+  // answers an opaque 500 and the reason lives only in a runtime log nobody
+  // thinks to open on their first deploy. Refusing per-request serves just as
+  // little and makes `curl /api/health` diagnose the deployment itself.
+  if (require.main === module) process.exit(1);
+  app.use((_req, res) => {
+    res.status(503).json({
+      ok: false,
+      error: 'DEBRIEF is not configured for production and is serving nothing.',
+      problems,
+    });
+  });
+}
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Sign-in routes. No-ops unless GOOGLE_CLIENT_ID is set, so an existing
 // unauthenticated LAN setup keeps working exactly as it did.
 auth.install(app);
-
-// Refuse to serve a public deployment with writes wide open.
-//
-// Unauthenticated is the right default on a trusted LAN and a liability the
-// moment the app has a public URL: anyone who finds it could post or delete a
-// team's review. Rather than trust whoever deploys it to remember, production
-// has to be configured or it does not boot.
-//
-// DEBRIEF_ALLOW_OPEN=1 is the escape hatch for a private network deployment
-// that genuinely wants no sign-in.
-if (process.env.NODE_ENV === 'production' && !auth.config().enabled
-    && process.env.DEBRIEF_ALLOW_OPEN !== '1') {
-  console.error(
-    '\nRefusing to start: NODE_ENV=production with no GOOGLE_CLIENT_ID.\n' +
-    'Anyone reaching this server could post or delete your team\'s review.\n\n' +
-    'Set GOOGLE_CLIENT_ID and DEBRIEF_ALLOWED_EMAILS (see .env.example),\n' +
-    'or set DEBRIEF_ALLOW_OPEN=1 if this really is a private network.\n'
-  );
-  process.exit(1);
-}
-
-// Same reasoning for the session secret. Without a fixed one each serverless
-// instance signs with its own, so a cookie minted by one is rejected by the
-// next and people are logged out at random — a bug that reads as flakiness
-// rather than as misconfiguration, which is exactly why it is checked here.
-if (process.env.NODE_ENV === 'production' && auth.config().enabled
-    && !process.env.DEBRIEF_SESSION_SECRET) {
-  console.error(
-    '\nRefusing to start: sign-in is on but DEBRIEF_SESSION_SECRET is not set.\n' +
-    'Sessions would break unpredictably across instances.\n\n' +
-    'Generate one with:  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"\n'
-  );
-  process.exit(1);
-}
 
 // Health check for the platform's restart logic. Proves the *storage* works,
 // not merely that the process is up: a container without its volume, or a
@@ -57,7 +81,22 @@ app.get('/api/health', async (_req, res) => {
   // on a public endpoint. Scoreboards are the one thing that needs it, and
   // without this the failure surfaces mid-review when someone pastes an image
   // — long after the deploy that caused it.
+  const cfg = auth.config();
   const blob = vods.storeKind !== 'postgres' || !!process.env.BLOB_READ_WRITE_TOKEN;
+
+  // Sign-in on with an empty allowlist denies everyone, including whoever just
+  // deployed it. The only symptom is a 403 at sign-in naming your own address,
+  // which reads as "wrong Google account" rather than "unset variable" — so it
+  // is reported here, which is where anyone looks first after a deploy.
+  const allowed = cfg.allow.length;
+
+  const warnings = [];
+  if (!blob) {
+    warnings.push('BLOB_READ_WRITE_TOKEN is not set — scoreboard uploads will fail.');
+  }
+  if (cfg.enabled && !allowed) {
+    warnings.push('DEBRIEF_ALLOWED_EMAILS is empty — nobody can sign in, so nothing can be written.');
+  }
 
   try {
     if (vods.storeKind === 'postgres') {
@@ -73,11 +112,13 @@ app.get('/api/health', async (_req, res) => {
     res.json({
       ok: true,
       store: vods.storeKind,
-      auth: auth.config().enabled,
+      auth: cfg.enabled,
       blob,
-      // ok stays true: everything except scoreboard upload still works, and
-      // failing the health check would take the whole site down over it.
-      ...(blob ? {} : { warning: 'BLOB_READ_WRITE_TOKEN is not set — scoreboard uploads will fail.' }),
+      allowed,
+      // ok stays true through these: the site is up and most of it works. A
+      // health check that failed over a missing scoreboard token would take
+      // the whole deployment down to report something survivable.
+      ...(warnings.length ? { warnings } : {}),
     });
   } catch (e) {
     res.status(503).json({ ok: false, store: vods.storeKind, blob, error: e.message });

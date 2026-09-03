@@ -1,0 +1,35 @@
+# What Vercel needs from this repository is the Express app, its entry point and
+# public/. Everything else here belongs to the Windows recorder, and uploading
+# it makes every deploy slower for nothing — the Rust tree and the benchmark
+# CSVs are the bulk of what is checked in.
+#
+# Mirrors .dockerignore, minus the entries that would take the web app with it.
+
+.git
+node_modules
+
+# The recorder: a Windows desktop app, none of which runs on Linux.
+recorder-app
+recorder-core
+recorder-proto
+target
+Cargo.toml
+Cargo.lock
+.cargo
+
+# Benchmark data: hundreds of MB of frame CSVs.
+bench
+
+# Design comps and prose — read on GitHub, not served.
+design
+docs
+*.md
+
+# Local review data and secrets, should either exist on the machine deploying.
+data
+.env
+.env.local
+
+*.log
+*.zip
+*.mp4
