@@ -26,7 +26,7 @@ docs
 *.md
 
 # Local review data and secrets, should either exist on the machine deploying.
-data
+/data
 .env
 .env.local
 
